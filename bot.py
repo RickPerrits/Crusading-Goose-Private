@@ -16,13 +16,13 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 CHARACTERS = {
     "patrick": {
         "attack_die": "1d20",
-        "helper_dice": "2d4",
+        "helper_dice": "3d4",
         "damage_die": "1d8",
         "hit_threshold": 11,
     },
     "cassie": {
         "attack_die": "1d20",
-        "helper_dice": "2d4",
+        "helper_dice": "3d4",
         "damage_die": "1d8",
         "hit_threshold": 11,
     },
