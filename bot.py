@@ -3,6 +3,11 @@ from discord.ext import commands
 import random
 import re
 
+from datetime import datetime
+
+def game_is_open():
+    return 1 <= datetime.now().day <= 28
+
 intents = discord.Intents.default()
 intents.message_content = True
 
@@ -241,6 +246,10 @@ async def bindme(ctx, character_name: str):
 
 @bot.command()
 async def me(ctx):
+    if not game_is_open():
+        await ctx.send("The hunt is over for this month. Rest up — we begin again on the 1st.")
+        return
+
     character_name = USER_BINDINGS.get(ctx.author.id)
 
     if not character_name:
@@ -286,8 +295,13 @@ async def on_message(message):
         extra_text = parts[1] if len(parts) > 1 else None
 
         if command_name in CHARACTERS:
-            response = run_character_attack(command_name)
+            if not game_is_open():
+                await message.channel.send(
+                    "The hunt is over for this month. Rest up — we begin again on the 1st."
+                )
+                return
 
+            response = run_character_attack(command_name)
             await message.channel.send(response)
             return
 
