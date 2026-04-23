@@ -43,7 +43,7 @@ CHARACTERS = {
         "damage_die": "1d10",
         "hit_threshold": 11,
     },
-    "meg": {
+    "peeka": {
         "attack_die": "1d20",
         "helper_dice": None,
         "damage_die": "1d8",
