@@ -4,9 +4,11 @@ import random
 import re
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 def game_is_open():
-    return 1 <= datetime.now().day <= 28
+    eastern_now = datetime.now(ZoneInfo("America/New_York"))
+    return 1 <= eastern_now.day <= 28
 
 intents = discord.Intents.default()
 intents.message_content = True
