@@ -26,42 +26,49 @@ CHARACTERS = {
         "helper_dice": "5d4",
         "damage_die": "1d8",
         "hit_threshold": 11,
+        "dead": False,
     },
     "cassie": {
         "attack_die": "1d20",
         "helper_dice": "5d4",
         "damage_die": "1d8",
         "hit_threshold": 11,
+        "dead": False,
     },
     "jay": {
         "attack_die": "1d20",
         "helper_dice": "3d4",
         "damage_die": "1d8",
         "hit_threshold": 11,
+        "dead": False,
     },
     "josh": {
         "attack_die": "1d20",
         "helper_dice": "1d4",
         "damage_die": "1d10",
         "hit_threshold": 11,
+        "dead": False, 
     },
     "meg": {
         "attack_die": "1d20",
         "helper_dice": None,
         "damage_die": "1d8",
         "hit_threshold": 11,
+        "dead": False,
     },
     "caty": {
         "attack_die": "1d20",
         "helper_dice": "7d4",
         "damage_die": "1d8",
         "hit_threshold": 11,
+        "dead": False,
     },
     "ryan": {
         "attack_die": "1d20",
         "helper_dice": None,
-        "damage_die": "Need to make a new character",
+        "damage_die": "1d8",
         "hit_threshold": 11,
+        "dead": True,
     },
 }
 
@@ -156,6 +163,12 @@ def get_hit_or_miss_text(hit):
 
 def run_character_attack(character_name: str):
     profile = CHARACTERS[character_name]
+
+    if profile.get("dead", False):
+        return (
+            f"☠️ **{character_name.title()}**, your character has perished. "
+            "Please contact the GM to create a new character."
+        )
 
     hit_threshold = profile["hit_threshold"]
 
