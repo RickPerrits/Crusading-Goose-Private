@@ -23,21 +23,21 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 CHARACTERS = {
     "patrick": {
         "attack_die": "1d20",
-        "helper_dice": "5d4",
+        "helper_dice": "6d4",
         "damage_die": "1d8",
         "hit_threshold": 11,
         "dead": False,
     },
     "cassie": {
         "attack_die": "1d20",
-        "helper_dice": "5d4",
+        "helper_dice": "6d4",
         "damage_die": "1d8",
         "hit_threshold": 11,
         "dead": False,
     },
     "jay": {
         "attack_die": "1d20",
-        "helper_dice": "3d4",
+        "helper_dice": "4d4",
         "damage_die": "1d8",
         "hit_threshold": 11,
         "dead": False,
@@ -58,7 +58,7 @@ CHARACTERS = {
     },
     "caty": {
         "attack_die": "1d20",
-        "helper_dice": "7d4",
+        "helper_dice": "8d4",
         "damage_die": "1d8",
         "hit_threshold": 11,
         "dead": False,
