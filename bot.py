@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import random
 import re
 
@@ -71,6 +71,68 @@ CHARACTERS = {
         "dead": True,
     },
 }
+
+POTIONS = {
+    "healing": {
+        "name": "Potion of Healing",
+        "emoji": "❤️",
+        "description": "All Hail the Healers! Restore yourself to full health!",
+        "effect": "heal_full",
+    },
+
+    "speed": {
+        "name": "Potion of Speed",
+        "emoji": "⚡",
+        "description": "Immediately make a second attack, at the risk of taking damage from both attacks.",
+        "effect": "extra_attack",
+    },
+
+    "sharpness": {
+        "name": "Oil of Sharpness",
+        "emoji": "🗡️",
+        "description": "Looking Sharp! +4 Attack and +4 Damage today.",
+        "effect": "plus_four",
+    },
+
+    "luck": {
+        "name": "Potion of Luck",
+        "emoji": "🍀",
+        "description": "Your attack roll becomes 11! Were you saved from a nat1? Or robbed of a Nat20? Maybe! It doesn't matter, today your roll is an 11!",
+        "effect": "attack_becomes_11",
+    },
+
+    "grossness": {
+        "name": "Potion of Grossness",
+        "emoji": "🤢",
+        "description": "Whoops, wrong potion, you now Attack at Disadvantage.",
+        "effect": "disadvantage",
+    },
+
+    "invulnerability": {
+        "name": "Potion of Invulnerability",
+        "emoji": "🛡️",
+        "description": "You take no damage today!",
+        "effect": "no_damage_taken",
+    },
+
+    "possibilities": {
+        "name": "Potion of Possibilities",
+        "emoji": "🎲",
+        "description": "Reroll one previous roll.",
+        "effect": "reroll_previous",
+    },
+
+    "wealth": {
+        "name": "Potion of Wealth",
+        "emoji": "💰",
+        "description": "All items in the shop are sold for Half Price!",
+        "effect": "sale",
+    },
+}
+
+BONUS_DAYS = {}
+
+LAST_BONUS_MONTH = None
 
 USER_BINDINGS = {}
 
@@ -147,6 +209,13 @@ def roll_single_d20():
     value = random.randint(1, 20)
     return value, f"1d20[{value}]"
 
+def get_attack_roll(potion_effect):
+    d20_roll, d20_breakdown = roll_single_d20()
+
+    if potion_effect == "attack_becomes_11":
+        return 11, f"{d20_breakdown}. 🍀 Lucky! It's an 11!"
+
+    return d20_roll, d20_breakdown
 
 def get_nat_text(d20_roll):
     if d20_roll == 20:
@@ -164,6 +233,54 @@ def get_hit_or_miss_text(hit):
 def run_character_attack(character_name: str):
     profile = CHARACTERS[character_name]
 
+    todays_potion = get_todays_bonus_potion()
+    potion_effect = todays_potion["effect"] if todays_potion else None
+
+    combat_state = {
+        "attack_bonus": 0,
+        "damage_bonus": 0,
+        "invulnerable": False,
+    }
+
+    manual_bonus_note = None
+
+    if potion_effect == "no_damage_taken":
+        combat_state["invulnerable"] = True
+
+    elif potion_effect == "plus_four":
+        combat_state["attack_bonus"] += 4
+        combat_state["damage_bonus"] += 4
+
+    elif potion_effect == "heal_full":
+        manual_bonus_note = "❤️ Healing is not tracked by the bot yet, but today you restore yourself to full health!"
+
+    elif potion_effect == "reroll_previous":
+        manual_bonus_note = "🎲 Reroll tracking is not automated yet. Contact the GM to reroll one previous roll."
+
+    elif potion_effect == "extra_attack":
+        manual_bonus_note = "⚡ Speed is not automated yet. For now, roll again for your second attack!"
+
+    elif potion_effect == "attack_becomes_11":
+        pass
+
+    elif potion_effect == "disadvantage":
+        manual_bonus_note = "🤢 Disadvantage is not automated yet. For now, roll twice and use the lower result."
+    
+    elif potion_effect == "sale":
+        manual_bonus_note = "💰 Shop prices are not tracked by the bot yet. The GM will honor today's half-price sale."
+
+    if todays_potion:
+        response = (
+            "🧪 **BONUS DAY!**\n\n"
+            f"{todays_potion['emoji']} **{todays_potion['name']}**\n"
+            f"{todays_potion['description']}\n\n"
+        )
+    else:
+        response = ""
+
+    if manual_bonus_note:
+        response += manual_bonus_note + "\n\n"
+    
     if profile.get("dead", False):
         return (
             f"☠️ **{character_name.title()}**, your character has perished. "
@@ -172,7 +289,7 @@ def run_character_attack(character_name: str):
 
     hit_threshold = profile["hit_threshold"]
 
-    d20_roll, d20_breakdown = roll_single_d20()
+    d20_roll, d20_breakdown = get_attack_roll(potion_effect)
     nat_text = get_nat_text(d20_roll)
 
     helper_total = 0
@@ -180,7 +297,8 @@ def run_character_attack(character_name: str):
     damage_breakdown = ""
     base_damage_breakdown = ""
 
-    original_hit = d20_roll >= hit_threshold
+    attack_total_without_helpers = d20_roll + combat_state["attack_bonus"]
+    original_hit = attack_total_without_helpers >= hit_threshold
 
     if original_hit:
         hit = True
@@ -190,7 +308,7 @@ def run_character_attack(character_name: str):
         else:
             helper_total, helper_breakdown = 0, ""
 
-        _, base_damage_breakdown = roll_dice_expression(profile["damage_die"])
+        base_damage_total, base_damage_breakdown = roll_dice_expression(profile["damage_die"])
 
     else:
         if profile["helper_dice"]:
@@ -198,34 +316,71 @@ def run_character_attack(character_name: str):
         else:
             helper_total, helper_breakdown = 0, ""
 
-        attack_total = d20_roll + helper_total
+        attack_total = d20_roll + helper_total + combat_state["attack_bonus"]
         hit = attack_total >= hit_threshold
 
         if hit:
-            _, damage_breakdown = roll_dice_expression(profile["damage_die"])
+            damage_total, damage_breakdown = roll_dice_expression(profile["damage_die"])
         else:
             damage_breakdown = "none"
 
     flavor_text = get_hit_or_miss_text(hit)
 
-    if original_hit:
-        attack_display = d20_breakdown
-    else:
-        attack_display = f"{d20_breakdown} {helper_breakdown}".strip()
+    attack_bonus_display = (
+        f" +{combat_state['attack_bonus']}"
+        if combat_state["attack_bonus"]
+        else ""
+    )
 
+    if original_hit:
+        attack_display = f"{d20_breakdown}{attack_bonus_display}"
+    else:
+        attack_display = f"{d20_breakdown}{attack_bonus_display} {helper_breakdown}".strip()
+    
+    damage_bonus_display = (
+        f" +{combat_state['damage_bonus']}"
+        if combat_state["damage_bonus"] and hit
+        else ""
+    )
+    
     if hit:
         if original_hit:
-            damage_display = f"{base_damage_breakdown} {helper_breakdown}".strip()
+            total_damage = (
+                base_damage_total
+                + helper_total
+                + combat_state["damage_bonus"]
+            )
+
+            damage_display = (
+                f"{base_damage_breakdown} "
+                f"{helper_breakdown}"
+                f"{damage_bonus_display}"
+            ).strip()
+
         else:
-            damage_display = damage_breakdown
+            total_damage = (
+                damage_total
+                + combat_state["damage_bonus"]
+            )
+
+            damage_display = (
+                f"{damage_breakdown}"
+                f"{damage_bonus_display}"
+            ).strip()
+
     else:
+        total_damage = 0
         damage_display = "none"
 
-    response = (
+    response += (
         f"🎲 **{character_name.title()}** attacks!\n"
         f"Attack: {attack_display}\n"
-        f"Damage: {damage_display}"
+        f"Damage: **{total_damage} Total**\n"
+        f"({damage_display})"
     )
+    
+    if combat_state["invulnerable"]:
+        response += "\n🛡️ You are invulnerable today and take no damage from this attack!"
 
     if d20_roll in (20, 1):
         response += nat_text
@@ -234,6 +389,57 @@ def run_character_attack(character_name: str):
 
     return response
 
+def pick_bonus_days():
+    chosen_days = [
+        random.randint(2, 7),
+        random.randint(8, 14),
+        random.randint(15, 21),
+        random.randint(22, 28),
+    ]
+
+    potion_keys = list(POTIONS.keys())
+    chosen_potions = random.sample(potion_keys, 4)
+
+    return dict(zip(chosen_days, chosen_potions))
+
+def get_todays_bonus_potion():
+    today = datetime.now(ZoneInfo("America/New_York")).day
+
+    potion_key = BONUS_DAYS.get(today)
+
+    if potion_key is None:
+        return None
+
+    return POTIONS[potion_key]
+
+@tasks.loop(hours=1)
+async def monthly_bonus_picker():
+    global BONUS_DAYS, LAST_BONUS_MONTH
+
+    eastern_now = datetime.now(ZoneInfo("America/New_York"))
+
+    if (
+        eastern_now.day == 1
+        and LAST_BONUS_MONTH != eastern_now.month
+    ):
+        BONUS_DAYS = pick_bonus_days()
+        LAST_BONUS_MONTH = eastern_now.month
+
+        print("Monthly bonus days picked:", BONUS_DAYS)
+
+@bot.command()
+async def pickbonus(ctx):
+    global BONUS_DAYS
+
+    BONUS_DAYS = pick_bonus_days()
+
+    print(BONUS_DAYS)
+
+    await ctx.send(
+        "🎁 **This month's bonus days have been secretly chosen!**\n"
+        "The rewards will be revealed on the day they appear."
+    )
+    
 @bot.command()
 async def roll(ctx, *, expression: str = "1d20"):
     try:
@@ -293,6 +499,13 @@ async def mybind(ctx):
         await ctx.send("You are not currently bound to any character.")
 
 @bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user}")
+
+    if not monthly_bonus_picker.is_running():
+        monthly_bonus_picker.start()
+
+@bot.event
 async def on_message(message):
     if message.author.bot:
         return
@@ -321,7 +534,7 @@ async def on_message(message):
             return
 
     await bot.process_commands(message)
-    
+
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
