@@ -210,11 +210,21 @@ def roll_single_d20():
     return value, f"1d20[{value}]"
 
 def get_attack_roll(potion_effect):
-    d20_roll, d20_breakdown = roll_single_d20()
-
     if potion_effect == "attack_becomes_11":
+        d20_roll, d20_breakdown = roll_single_d20()
         return 11, f"{d20_breakdown}. 🍀 Lucky! It's an 11!"
 
+    if potion_effect == "disadvantage":
+        roll_one, breakdown_one = roll_single_d20()
+        roll_two, breakdown_two = roll_single_d20()
+        lower_roll = min(roll_one, roll_two)
+
+        return (
+            lower_roll,
+            f"{breakdown_one}, {breakdown_two}\n🤢 Disadvantage! Using {lower_roll}."
+        )
+
+    d20_roll, d20_breakdown = roll_single_d20()
     return d20_roll, d20_breakdown
 
 def get_nat_text(d20_roll):
@@ -230,63 +240,8 @@ def get_hit_or_miss_text(hit):
         return "\n" + random.choice(HIT_MESSAGES)
     return "\n" + random.choice(MISS_MESSAGES)
 
-def run_character_attack(character_name: str):
+def resolve_single_attack(character_name: str, potion_effect, combat_state, attack_label=None):
     profile = CHARACTERS[character_name]
-
-    todays_potion = get_todays_bonus_potion()
-    potion_effect = todays_potion["effect"] if todays_potion else None
-
-    combat_state = {
-        "attack_bonus": 0,
-        "damage_bonus": 0,
-        "invulnerable": False,
-    }
-
-    manual_bonus_note = None
-
-    if potion_effect == "no_damage_taken":
-        combat_state["invulnerable"] = True
-
-    elif potion_effect == "plus_four":
-        combat_state["attack_bonus"] += 4
-        combat_state["damage_bonus"] += 4
-
-    elif potion_effect == "heal_full":
-        manual_bonus_note = "❤️ Healing is not tracked by the bot yet, but today you restore yourself to full health!"
-
-    elif potion_effect == "reroll_previous":
-        manual_bonus_note = "🎲 Reroll tracking is not automated yet. Contact the GM to reroll one previous roll."
-
-    elif potion_effect == "extra_attack":
-        manual_bonus_note = "⚡ Speed is not automated yet. For now, roll again for your second attack!"
-
-    elif potion_effect == "attack_becomes_11":
-        pass
-
-    elif potion_effect == "disadvantage":
-        manual_bonus_note = "🤢 Disadvantage is not automated yet. For now, roll twice and use the lower result."
-    
-    elif potion_effect == "sale":
-        manual_bonus_note = "💰 Shop prices are not tracked by the bot yet. The GM will honor today's half-price sale."
-
-    if todays_potion:
-        response = (
-            "🧪 **BONUS DAY!**\n\n"
-            f"{todays_potion['emoji']} **{todays_potion['name']}**\n"
-            f"{todays_potion['description']}\n\n"
-        )
-    else:
-        response = ""
-
-    if manual_bonus_note:
-        response += manual_bonus_note + "\n\n"
-    
-    if profile.get("dead", False):
-        return (
-            f"☠️ **{character_name.title()}**, your character has perished. "
-            "Please contact the GM to create a new character."
-        )
-
     hit_threshold = profile["hit_threshold"]
 
     d20_roll, d20_breakdown = get_attack_roll(potion_effect)
@@ -336,13 +291,13 @@ def run_character_attack(character_name: str):
         attack_display = f"{d20_breakdown}{attack_bonus_display}"
     else:
         attack_display = f"{d20_breakdown}{attack_bonus_display} {helper_breakdown}".strip()
-    
+
     damage_bonus_display = (
         f" +{combat_state['damage_bonus']}"
         if combat_state["damage_bonus"] and hit
         else ""
     )
-    
+
     if hit:
         if original_hit:
             total_damage = (
@@ -372,20 +327,114 @@ def run_character_attack(character_name: str):
         total_damage = 0
         damage_display = "none"
 
-    response += (
-        f"🎲 **{character_name.title()}** attacks!\n"
+    label_text = f"{attack_label}\n" if attack_label else ""
+
+    attack_text = (
+        f"{label_text}"
         f"Attack: {attack_display}\n"
         f"Damage: **{total_damage} Total**\n"
         f"({damage_display})"
     )
-    
-    if combat_state["invulnerable"]:
-        response += "\n🛡️ You are invulnerable today and take no damage from this attack!"
 
     if d20_roll in (20, 1):
-        response += nat_text
+        attack_text += nat_text
     else:
-        response += flavor_text
+        attack_text += flavor_text
+
+    return {
+        "hit": hit,
+        "damage_dealt": total_damage,
+        "attack_roll": d20_roll,
+        "text": attack_text,
+    }
+
+def run_character_attack(character_name: str):
+    profile = CHARACTERS[character_name]
+
+    todays_potion = get_todays_bonus_potion()
+    potion_effect = todays_potion["effect"] if todays_potion else None
+
+    combat_state = {
+        "attack_bonus": 0,
+        "damage_bonus": 0,
+        "invulnerable": False,
+    }
+
+    manual_bonus_note = None
+
+    if potion_effect == "no_damage_taken":
+        combat_state["invulnerable"] = True
+
+    elif potion_effect == "plus_four":
+        combat_state["attack_bonus"] += 4
+        combat_state["damage_bonus"] += 4
+
+    elif potion_effect == "heal_full":
+        manual_bonus_note = "❤️ Healing is not tracked by the bot yet, but today you restore yourself to full health!"
+
+    elif potion_effect == "reroll_previous":
+        manual_bonus_note = "🎲 Reroll tracking is not automated yet. Contact the GM to reroll one previous roll."
+
+    elif potion_effect == "extra_attack":
+        pass
+
+    elif potion_effect == "attack_becomes_11":
+        pass
+    
+    elif potion_effect == "sale":
+        manual_bonus_note = "💰 Shop prices are not tracked by the bot yet. The GM will honor today's half-price sale."
+
+    if todays_potion:
+        response = (
+            "🧪 **BONUS DAY!**\n\n"
+            f"{todays_potion['emoji']} **{todays_potion['name']}**\n"
+            f"{todays_potion['description']}\n\n"
+        )
+    else:
+        response = ""
+
+    if manual_bonus_note:
+        response += manual_bonus_note + "\n\n"
+    
+    if profile.get("dead", False):
+        return (
+            f"☠️ **{character_name.title()}**, your character has perished. "
+            "Please contact the GM to create a new character."
+        )
+
+    response += f"🎲 **{character_name.title()}** attacks!\n"
+
+    if potion_effect == "extra_attack":
+        first_attack = resolve_single_attack(
+            character_name,
+            None,
+            combat_state,
+            attack_label="⚡ **First Attack**"
+        )
+
+        second_attack = resolve_single_attack(
+            character_name,
+            None,
+            combat_state,
+            attack_label="⚡ **Second Attack**"
+        )
+
+        response += (
+            f"{first_attack['text']}\n\n"
+            f"{second_attack['text']}"
+        )
+
+    else:
+        attack_result = resolve_single_attack(
+            character_name,
+            potion_effect,
+            combat_state
+        )
+
+        response += attack_result["text"]
+
+    if combat_state["invulnerable"]:
+        response += "\n🛡️ You are invulnerable today and take no damage from this attack!"
 
     return response
 
