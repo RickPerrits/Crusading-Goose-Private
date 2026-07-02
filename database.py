@@ -1,11 +1,11 @@
 import sqlite3
 from pathlib import Path
+import random
 
 DB_NAME = Path(__file__).parent / "goosequest.db"
 
 def get_connection():
     return sqlite3.connect(DB_NAME)
-
 
 def setup_database():
     conn = get_connection()
@@ -65,7 +65,6 @@ def save_bonus_day(month, day, potion_key, target_discord_id=None, target_name=N
     conn.commit()
     conn.close()
 
-
 def clear_bonus_days_not_for_month(month):
     conn = get_connection()
     cursor = conn.cursor()
@@ -77,7 +76,6 @@ def clear_bonus_days_not_for_month(month):
 
     conn.commit()
     conn.close()
-
 
 def get_bonus_day(month, day, target_discord_id=None):
     conn = get_connection()
@@ -118,7 +116,6 @@ def get_bonus_day(month, day, target_discord_id=None):
 
     return None
 
-
 def bonus_days_exist_for_month(month):
     conn = get_connection()
     cursor = conn.cursor()
@@ -134,6 +131,27 @@ def bonus_days_exist_for_month(month):
 
     return count > 0
 
+def generate_monthly_bonus_days(month, potion_keys):
+    if bonus_days_exist_for_month(month):
+        return False
+
+    chosen_days = [
+        random.randint(2, 7),
+        random.randint(8, 14),
+        random.randint(15, 21),
+        random.randint(22, 28),
+    ]
+
+    chosen_potions = random.sample(potion_keys, 4)
+
+    clear_bonus_days_not_for_month(month)
+
+    for day, potion_key in zip(chosen_days, chosen_potions):
+        save_bonus_day(month, day, potion_key)
+
+    return True
+
 if __name__ == "__main__":
     setup_database()
     print("Database created successfully!")
+
