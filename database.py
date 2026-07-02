@@ -26,6 +26,18 @@ def setup_database():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS bonus_days (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            month TEXT NOT NULL,
+            day INTEGER NOT NULL,
+            potion_key TEXT NOT NULL,
+            target_discord_id INTEGER,
+            target_name TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     conn.commit()
     conn.close()
 
