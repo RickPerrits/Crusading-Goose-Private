@@ -2,7 +2,12 @@ import discord
 from discord.ext import commands, tasks
 import random
 import re
-from database import setup_database
+from database import (
+    setup_database,
+    save_bonus_day,
+    get_bonus_day,
+    generate_monthly_bonus_days,
+)
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -130,10 +135,6 @@ POTIONS = {
         "effect": "sale",
     },
 }
-
-BONUS_DAYS = {}
-
-LAST_BONUS_MONTH = None
 
 USER_BINDINGS = {}
 
@@ -439,23 +440,16 @@ def run_character_attack(character_name: str):
 
     return response
 
-def pick_bonus_days():
-    chosen_days = [
-        random.randint(2, 7),
-        random.randint(8, 14),
-        random.randint(15, 21),
-        random.randint(22, 28),
-    ]
+def get_current_month_key():
+    eastern_now = datetime.now(ZoneInfo("America/New_York"))
+    return eastern_now.strftime("%Y-%m")
 
-    potion_keys = list(POTIONS.keys())
-    chosen_potions = random.sample(potion_keys, 4)
+def get_todays_bonus_potion(discord_user_id=None):
+    eastern_now = datetime.now(ZoneInfo("America/New_York"))
+    month = eastern_now.strftime("%Y-%m")
+    day = eastern_now.day
 
-    return dict(zip(chosen_days, chosen_potions))
-
-def get_todays_bonus_potion():
-    today = datetime.now(ZoneInfo("America/New_York")).day
-
-    potion_key = BONUS_DAYS.get(today)
+    potion_key = get_bonus_day(month, day, discord_user_id)
 
     if potion_key is None:
         return None
@@ -464,31 +458,39 @@ def get_todays_bonus_potion():
 
 @tasks.loop(hours=1)
 async def monthly_bonus_picker():
-    global BONUS_DAYS, LAST_BONUS_MONTH
-
     eastern_now = datetime.now(ZoneInfo("America/New_York"))
 
-    if (
-        eastern_now.day == 1
-        and LAST_BONUS_MONTH != eastern_now.month
-    ):
-        BONUS_DAYS = pick_bonus_days()
-        LAST_BONUS_MONTH = eastern_now.month
+    if eastern_now.day != 1:
+        return
 
-        print("Monthly bonus days picked:", BONUS_DAYS)
+    month = eastern_now.strftime("%Y-%m")
+
+    created = generate_monthly_bonus_days(
+        month,
+        list(POTIONS.keys())
+    )
+
+    if created:
+        print(f"Monthly bonus days generated for {month}.")
 
 @bot.command()
 async def pickbonus(ctx):
-    global BONUS_DAYS
+    month = get_current_month_key()
 
-    BONUS_DAYS = pick_bonus_days()
-
-    print(BONUS_DAYS)
-
-    await ctx.send(
-        "🎁 **This month's bonus days have been secretly chosen!**\n"
-        "The rewards will be revealed on the day they appear."
+    created = generate_monthly_bonus_days(
+        month,
+        list(POTIONS.keys())
     )
+
+    if created:
+        await ctx.send(
+            "🎁 **This month's bonus days have been secretly chosen and saved!**\n"
+            "The rewards will be revealed on the day they appear."
+        )
+    else:
+        await ctx.send(
+            "🎁 Bonus days have already been chosen for this month."
+        )
     
 @bot.command()
 async def roll(ctx, *, expression: str = "1d20"):
