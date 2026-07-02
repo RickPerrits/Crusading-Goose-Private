@@ -15,16 +15,46 @@ def setup_database():
         CREATE TABLE IF NOT EXISTS characters (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             discord_user_id INTEGER UNIQUE,
-            character_name TEXT NOT NULL,
+            character_name TEXT NOT NULL UNIQUE,
             player_name TEXT,
             class_name TEXT NOT NULL,
             level INTEGER NOT NULL DEFAULT 1,
+
+            attack_die TEXT NOT NULL DEFAULT '1d20',
+            helper_dice TEXT,
+            damage_die TEXT NOT NULL DEFAULT '1d8',
+            hit_threshold INTEGER NOT NULL DEFAULT 11,
+
             current_hp INTEGER NOT NULL,
             max_hp INTEGER NOT NULL,
             gold INTEGER NOT NULL DEFAULT 0,
             dead INTEGER NOT NULL DEFAULT 0
         )
     """)
+    
+    existing_columns = [
+        row[1] for row in cursor.execute("PRAGMA table_info(characters)")
+    ]
+
+    if "attack_die" not in existing_columns:
+        cursor.execute(
+            "ALTER TABLE characters ADD COLUMN attack_die TEXT NOT NULL DEFAULT '1d20'"
+        )
+
+    if "helper_dice" not in existing_columns:
+        cursor.execute(
+            "ALTER TABLE characters ADD COLUMN helper_dice TEXT"
+        )
+
+    if "damage_die" not in existing_columns:
+        cursor.execute(
+            "ALTER TABLE characters ADD COLUMN damage_die TEXT NOT NULL DEFAULT '1d8'"
+        )
+
+    if "hit_threshold" not in existing_columns:
+        cursor.execute(
+            "ALTER TABLE characters ADD COLUMN hit_threshold INTEGER NOT NULL DEFAULT 11"
+        )
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS bonus_days (
