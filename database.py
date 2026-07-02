@@ -41,6 +41,99 @@ def setup_database():
     conn.commit()
     conn.close()
 
+def save_bonus_day(month, day, potion_key, target_discord_id=None, target_name=None):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO bonus_days (
+            month,
+            day,
+            potion_key,
+            target_discord_id,
+            target_name
+        )
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        month,
+        day,
+        potion_key,
+        target_discord_id,
+        target_name
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def clear_bonus_days_not_for_month(month):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        DELETE FROM bonus_days
+        WHERE month != ?
+    """, (month,))
+
+    conn.commit()
+    conn.close()
+
+
+def get_bonus_day(month, day, target_discord_id=None):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    if target_discord_id is not None:
+        cursor.execute("""
+            SELECT potion_key
+            FROM bonus_days
+            WHERE month = ?
+            AND day = ?
+            AND target_discord_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, (month, day, target_discord_id))
+
+        personal_bonus = cursor.fetchone()
+
+        if personal_bonus:
+            conn.close()
+            return personal_bonus[0]
+
+    cursor.execute("""
+        SELECT potion_key
+        FROM bonus_days
+        WHERE month = ?
+        AND day = ?
+        AND target_discord_id IS NULL
+        ORDER BY created_at DESC
+        LIMIT 1
+    """, (month, day))
+
+    everyone_bonus = cursor.fetchone()
+    conn.close()
+
+    if everyone_bonus:
+        return everyone_bonus[0]
+
+    return None
+
+
+def bonus_days_exist_for_month(month):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT COUNT(*)
+        FROM bonus_days
+        WHERE month = ?
+    """, (month,))
+
+    count = cursor.fetchone()[0]
+    conn.close()
+
+    return count > 0
+
 if __name__ == "__main__":
     setup_database()
     print("Database created successfully!")
