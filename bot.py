@@ -14,6 +14,7 @@ from database import (
     unbind_character_from_user,
     level_up_character_by_discord_user_id,
     has_leveled_up_this_month,
+    undo_level_up_character,
 )
 
 from datetime import datetime
@@ -597,6 +598,26 @@ async def levelup(ctx):
         f"HP gained: **1d4[{result['hp_gain']}]**\n"
         f"HP: **{result['old_max_hp']} → {result['new_max_hp']}**\n"
         f"Helper Dice: **{updated_character['helper_dice']}**"
+    )
+
+@bot.command()
+@commands.has_permissions(manage_guild=True)
+async def undolevelup(ctx, character_name: str):
+    month = get_current_month_key()
+
+    result = undo_level_up_character(character_name, month)
+
+    if result is None:
+        await ctx.send(
+            f"❌ I couldn't find a level-up this month for **{character_name.title()}**."
+        )
+        return
+
+    await ctx.send(
+        f"↩️ **{result['character_name'].title()}**'s level-up has been undone.\n"
+        f"Level: **{result['new_level']} → {result['old_level']}**\n"
+        f"HP removed: **1d4[{result['hp_gain']}]**\n"
+        f"HP: **{result['new_max_hp']} → {result['old_max_hp']}**"
     )
 
 @bot.command()

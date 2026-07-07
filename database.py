@@ -403,6 +403,70 @@ def level_up_character_by_discord_user_id(discord_user_id, hp_gain, month):
         "hp_gain": hp_gain,
     }
 
+def undo_level_up_character(character_name, month):
+    character = get_character(character_name)
+
+    if character is None:
+        return None
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT *
+        FROM level_up_history
+        WHERE character_id = ?
+        AND month = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+    """, (
+        character["id"],
+        month
+    ))
+
+    history = cursor.fetchone()
+
+    if history is None:
+        conn.close()
+        return None
+
+    try:
+        cursor.execute("""
+            UPDATE characters
+            SET level = ?,
+                max_hp = ?,
+                current_hp = ?
+            WHERE id = ?
+        """, (
+            history[3],  # old_level
+            history[5],  # old_max_hp
+            history[5],  # current_hp back to old max
+            character["id"]
+        ))
+
+        cursor.execute("""
+            DELETE FROM level_up_history
+            WHERE id = ?
+        """, (history[0],))
+
+        conn.commit()
+
+    except sqlite3.Error:
+        conn.rollback()
+        return None
+
+    finally:
+        conn.close()
+
+    return {
+        "character_name": character["character_name"],
+        "old_level": history[3],
+        "new_level": history[4],
+        "old_max_hp": history[5],
+        "new_max_hp": history[6],
+        "hp_gain": history[7],
+    }
+
 def save_bonus_day(month, day, potion_key, target_discord_id=None, target_name=None):
     conn = get_connection()
     cursor = conn.cursor()
