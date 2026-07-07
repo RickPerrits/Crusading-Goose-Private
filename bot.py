@@ -12,7 +12,6 @@ from database import (
     create_level_1_character,
     bind_character_to_user,
     unbind_character_from_user,
-    seed_starting_characters,
 )
 
 from datetime import datetime
@@ -31,58 +30,6 @@ ALLOWED_CHANNEL_IDS = {
 }
 
 bot = commands.Bot(command_prefix="!", intents=intents)
-
-CHARACTERS = {
-    "patrick": {
-        "attack_die": "1d20",
-        "helper_dice": "6d4",
-        "damage_die": "1d8",
-        "hit_threshold": 11,
-        "dead": False,
-    },
-    "cassie": {
-        "attack_die": "1d20",
-        "helper_dice": "6d4",
-        "damage_die": "1d8",
-        "hit_threshold": 11,
-        "dead": False,
-    },
-    "jay": {
-        "attack_die": "1d20",
-        "helper_dice": "4d4",
-        "damage_die": "1d8",
-        "hit_threshold": 11,
-        "dead": False,
-    },
-    "josh": {
-        "attack_die": "1d20",
-        "helper_dice": "1d4",
-        "damage_die": "1d10",
-        "hit_threshold": 11,
-        "dead": False, 
-    },
-    "meg": {
-        "attack_die": "1d20",
-        "helper_dice": None,
-        "damage_die": "1d8",
-        "hit_threshold": 11,
-        "dead": False,
-    },
-    "caty": {
-        "attack_die": "1d20",
-        "helper_dice": "8d4",
-        "damage_die": "1d8",
-        "hit_threshold": 11,
-        "dead": False,
-    },
-    "ryan": {
-        "attack_die": "1d20",
-        "helper_dice": None,
-        "damage_die": "1d8",
-        "hit_threshold": 11,
-        "dead": True,
-    },
-}
 
 POTIONS = {
     "healing": {
@@ -141,8 +88,6 @@ POTIONS = {
         "effect": "sale",
     },
 }
-
-USER_BINDINGS = {}
 
 NAT_20_MESSAGES = [
     "🔥 **NAT 20!** The dice gods are smiling!",
