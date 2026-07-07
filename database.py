@@ -103,6 +103,22 @@ def setup_database():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS level_up_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            character_id INTEGER NOT NULL,
+            month TEXT NOT NULL,
+            old_level INTEGER NOT NULL,
+            new_level INTEGER NOT NULL,
+            old_max_hp INTEGER NOT NULL,
+            new_max_hp INTEGER NOT NULL,
+            hp_gain INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(character_id, month),
+            FOREIGN KEY (character_id) REFERENCES characters(id)
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -292,6 +308,100 @@ def seed_starting_characters():
     create_character("meg", "Meg", "druid", 1, 8, 8)
     create_character("caty", "Caty", "rogue", 9, 8, 8)
     create_character("ryan", "Ryan", "warlock", 1, 8, 8, dead=True)
+
+def has_leveled_up_this_month(discord_user_id, month):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT 1
+        FROM level_up_history
+        WHERE character_id = (
+            SELECT id
+            FROM characters
+            WHERE discord_user_id = ?
+        )
+        AND month = ?
+        LIMIT 1
+    """, (
+        discord_user_id,
+        month
+    ))
+
+    result = cursor.fetchone()
+    conn.close()
+
+    return result is not None
+
+def level_up_character_by_discord_user_id(discord_user_id, hp_gain, month):
+    character = get_character_by_discord_user_id(discord_user_id)
+
+    if character is None:
+        return None
+
+    old_level = character["level"]
+    old_max_hp = character["max_hp"]
+
+    new_level = old_level + 1
+    new_max_hp = old_max_hp + hp_gain
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            UPDATE characters
+            SET level = ?,
+                max_hp = ?,
+                current_hp = ?
+            WHERE discord_user_id = ?
+        """, (
+            new_level,
+            new_max_hp,
+            new_max_hp,
+            discord_user_id
+        ))
+
+        cursor.execute("""
+            INSERT INTO level_up_history (
+                character_id,
+                month,
+                old_level,
+                new_level,
+                old_max_hp,
+                new_max_hp,
+                hp_gain
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            character["id"],
+            month,
+            old_level,
+            new_level,
+            old_max_hp,
+            new_max_hp,
+            hp_gain
+        ))
+
+        conn.commit()
+
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        return None
+
+    finally:
+        conn.close()
+
+    updated_character = get_character_by_discord_user_id(discord_user_id)
+
+    return {
+        "character": updated_character,
+        "old_level": old_level,
+        "new_level": new_level,
+        "old_max_hp": old_max_hp,
+        "new_max_hp": new_max_hp,
+        "hp_gain": hp_gain,
+    }
 
 def save_bonus_day(month, day, potion_key, target_discord_id=None, target_name=None):
     conn = get_connection()

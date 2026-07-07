@@ -12,6 +12,8 @@ from database import (
     create_level_1_character,
     bind_character_to_user,
     unbind_character_from_user,
+    level_up_character_by_discord_user_id,
+    has_leveled_up_this_month,
 )
 
 from datetime import datetime
@@ -531,7 +533,7 @@ async def bindme(ctx, character_name: str):
     )
 
 @bot.command()
-async def attack(ctx):
+async def attack(ctx, *, personal_message: str = None):
     if not game_is_open():
         await ctx.send("The hunt is over for this month. Rest up — we begin again on the 1st.")
         return
@@ -544,7 +546,58 @@ async def attack(ctx):
         )
         return
 
-    await ctx.send(run_character_attack(character["character_name"]))
+    character_name = character["character_name"]
+
+    response = run_character_attack(character_name)
+
+    if personal_message:
+        old_attack_line = f"🎲 **{character_name.title()}** attacks!"
+        new_attack_line = (
+            f'🎲 **{character_name.title()}** attacks by "{personal_message}"!'
+        )
+        response = response.replace(old_attack_line, new_attack_line, 1)
+
+    await ctx.send(response)
+
+@bot.command()
+async def levelup(ctx):
+    character = get_character_by_discord_user_id(ctx.author.id)
+
+    if not character:
+        await ctx.send(
+            "You do not have a character yet. Use `!createnew name class` first."
+        )
+        return
+
+    month = get_current_month_key()
+
+    if has_leveled_up_this_month(ctx.author.id, month):
+        await ctx.send(
+            f"❌ **{character['character_name'].title()}** has already leveled up this month."
+        )
+        return
+
+    hp_gain = random.randint(1, 4)
+
+    result = level_up_character_by_discord_user_id(
+        ctx.author.id,
+        hp_gain,
+        month
+    )
+
+    if result is None:
+        await ctx.send("❌ I couldn't level up your character.")
+        return
+
+    updated_character = result["character"]
+
+    await ctx.send(
+        f"🎉 **{updated_character['character_name'].title()}** leveled up!\n"
+        f"Level: **{result['old_level']} → {result['new_level']}**\n"
+        f"HP gained: **1d4[{result['hp_gain']}]**\n"
+        f"HP: **{result['old_max_hp']} → {result['new_max_hp']}**\n"
+        f"Helper Dice: **{updated_character['helper_dice']}**"
+    )
 
 @bot.command()
 async def unbindme(ctx):
