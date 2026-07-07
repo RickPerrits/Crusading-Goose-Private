@@ -14,6 +14,7 @@ from database import (
     unbind_character_from_user,
     level_up_character_by_discord_user_id,
     has_leveled_up_this_month,
+    seed_starting_characters,
 )
 
 from datetime import datetime
@@ -667,6 +668,11 @@ async def on_message(message):
             return
 
     await bot.process_commands(message)
+
+@bot.command()
+async def seedcharacters(ctx):
+    seed_starting_characters()
+    await ctx.send("🌱 Starting characters have been seeded into the database.")
 
 @bot.event
 async def on_command_error(ctx, error):
