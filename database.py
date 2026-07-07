@@ -15,6 +15,8 @@ CLASS_RULES = {
     "rogue": {"damage_die": "1d8", "starting_hp": 8},
     "monk": {"damage_die": "1d8", "starting_hp": 8},
     "cleric": {"damage_die": "1d8", "starting_hp": 8},
+    "druid": {"damage_die": "1d8", "starting_hp": 8},
+    "bard": {"damage_die": "1d8", "starting_hp": 8},
 
     "ranger": {"damage_die": "1d10", "starting_hp": 10},
     "paladin": {"damage_die": "1d10", "starting_hp": 10},
@@ -131,6 +133,124 @@ def get_character(character_name):
     character["dead"] = bool(character["dead"])
 
     return character
+
+def get_character_by_discord_user_id(discord_user_id):
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT *
+        FROM characters
+        WHERE discord_user_id = ?
+        LIMIT 1
+    """, (discord_user_id,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    if row is None:
+        return None
+
+    character = dict(row)
+
+    character["attack_die"] = "1d20"
+    character["helper_dice"] = get_helper_dice_for_level(character["level"])
+    character["damage_die"] = get_damage_die_for_class(character["class_name"])
+    character["hit_threshold"] = 11
+    character["dead"] = bool(character["dead"])
+
+    return character
+
+def bind_character_to_user(character_name, discord_user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            UPDATE characters
+            SET discord_user_id = ?
+            WHERE LOWER(character_name) = LOWER(?)
+            AND discord_user_id IS NULL
+        """, (
+            discord_user_id,
+            character_name
+        ))
+
+        conn.commit()
+
+        if cursor.rowcount == 0:
+            return False
+
+        return True
+
+    except sqlite3.IntegrityError:
+        return False
+
+    finally:
+        conn.close()
+
+def unbind_character_from_user(discord_user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE characters
+        SET discord_user_id = NULL
+        WHERE discord_user_id = ?
+    """, (discord_user_id,))
+
+    conn.commit()
+    changed = cursor.rowcount > 0
+    conn.close()
+
+    return changed
+
+def create_level_1_character(character_name, player_name, class_name, discord_user_id):
+    class_key = class_name.lower()
+
+    if class_key not in CLASS_RULES:
+        return False, f"Unknown class: {class_name}"
+
+    starting_hp = CLASS_RULES[class_key]["starting_hp"]
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            INSERT INTO characters (
+                discord_user_id,
+                character_name,
+                player_name,
+                class_name,
+                level,
+                current_hp,
+                max_hp,
+                gold,
+                dead
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            discord_user_id,
+            character_name.lower(),
+            player_name,
+            class_key,
+            1,
+            starting_hp,
+            starting_hp,
+            0,
+            0
+        ))
+
+        conn.commit()
+        return True, None
+
+    except sqlite3.IntegrityError:
+        return False, "That character name is already taken, or you already have a character."
+
+    finally:
+        conn.close()
 
 def create_character(character_name, player_name, class_name, level, current_hp, max_hp, gold=0, dead=False, discord_user_id=None):
     conn = get_connection()

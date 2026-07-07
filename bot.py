@@ -7,6 +7,11 @@ from database import (
     save_bonus_day,
     get_bonus_day,
     generate_monthly_bonus_days,
+    get_character,
+    get_character_by_discord_user_id,
+    create_level_1_character,
+    bind_character_to_user,
+    unbind_character_from_user,
 )
 
 from datetime import datetime
@@ -243,7 +248,16 @@ def get_hit_or_miss_text(hit):
     return "\n" + random.choice(MISS_MESSAGES)
 
 def resolve_single_attack(character_name: str, potion_effect, combat_state, attack_label=None):
-    profile = CHARACTERS[character_name]
+    profile = get_character(character_name)
+
+    if profile is None:
+        return {
+            "hit": False,
+            "damage_dealt": 0,
+            "attack_roll": None,
+            "text": f"❌ I couldn't find a character named **{character_name.title()}**."
+        }
+    
     hit_threshold = profile["hit_threshold"]
 
     d20_roll, d20_breakdown = get_attack_roll(potion_effect)
@@ -351,7 +365,10 @@ def resolve_single_attack(character_name: str, potion_effect, combat_state, atta
     }
 
 def run_character_attack(character_name: str):
-    profile = CHARACTERS[character_name]
+    profile = get_character(character_name)
+
+    if profile is None:
+        return f"❌ I couldn't find a character named **{character_name.title()}**."
 
     todays_potion = get_todays_bonus_potion()
     potion_effect = todays_potion["effect"] if todays_potion else None
@@ -504,49 +521,111 @@ async def roll(ctx, *, expression: str = "1d20"):
     except Exception as e:
         await ctx.send(f"That roll format looks wrong. Error: {e}")
 
+@bot.command()
+async def createcharacter(ctx, character_name: str, class_name: str):
+    existing_character = get_character_by_discord_user_id(ctx.author.id)
+
+    if existing_character:
+        await ctx.send(
+            f"❌ You already have a character: **{existing_character['character_name'].title()}**."
+        )
+        return
+
+    success, error = create_level_1_character(
+        character_name=character_name,
+        player_name=ctx.author.display_name,
+        class_name=class_name,
+        discord_user_id=ctx.author.id
+    )
+
+    if not success:
+        await ctx.send(f"❌ {error}")
+        return
+
+    new_character = get_character(character_name)
+
+    await ctx.send(
+        f"✅ **{ctx.author.display_name}** created **{new_character['character_name'].title()}**!\n"
+        f"Class: **{new_character['class_name'].title()}**\n"
+        f"Level: **{new_character['level']}**\n"
+        f"HP: **{new_character['current_hp']}/{new_character['max_hp']}**\n"
+        f"Damage Die: **{new_character['damage_die']}**"
+    )
 
 @bot.command()
 async def bindme(ctx, character_name: str):
-    character_name = character_name.lower()
+    character = get_character(character_name)
 
-    if character_name not in CHARACTERS:
+    if not character:
         await ctx.send(f"There is no saved character named **{character_name}**.")
         return
 
-    USER_BINDINGS[ctx.author.id] = character_name
-    await ctx.send(f"✅ **{ctx.author.display_name}** is now bound to **{character_name.title()}**.")
+    existing_character = get_character_by_discord_user_id(ctx.author.id)
 
+    if existing_character:
+        await ctx.send(
+            f"❌ You are already bound to **{existing_character['character_name'].title()}**."
+        )
+        return
+
+    if character["discord_user_id"] is not None:
+        await ctx.send(
+            f"❌ **{character['character_name'].title()}** is already bound to another Discord user."
+        )
+        return
+
+    success = bind_character_to_user(character_name, ctx.author.id)
+
+    if not success:
+        await ctx.send("❌ I couldn't bind that character.")
+        return
+
+    await ctx.send(
+        f"✅ **{ctx.author.display_name}** is now bound to **{character['character_name'].title()}**."
+    )
 
 @bot.command()
-async def me(ctx):
+async def attack(ctx):
     if not game_is_open():
         await ctx.send("The hunt is over for this month. Rest up — we begin again on the 1st.")
         return
 
-    character_name = USER_BINDINGS.get(ctx.author.id)
+    character = get_character_by_discord_user_id(ctx.author.id)
 
-    if not character_name:
-        await ctx.send("You are not bound to a character yet. Use `!bindme patrick` first.")
+    if not character:
+        await ctx.send(
+            "You do not have a character yet. Use `!createcharacter name class` first."
+        )
         return
 
-    await ctx.send(run_character_attack(character_name))
-
+    await ctx.send(run_character_attack(character["character_name"]))
 
 @bot.command()
 async def unbindme(ctx):
-    if ctx.author.id in USER_BINDINGS:
-        old_name = USER_BINDINGS.pop(ctx.author.id)
-        await ctx.send(f"❌ **{ctx.author.display_name}** is no longer bound to **{old_name.title()}**.")
-    else:
-        await ctx.send("You do not have a bound character right now.")
+    character = get_character_by_discord_user_id(ctx.author.id)
 
+    if not character:
+        await ctx.send("You do not have a bound character right now.")
+        return
+
+    success = unbind_character_from_user(ctx.author.id)
+
+    if not success:
+        await ctx.send("❌ I couldn't unbind your character.")
+        return
+
+    await ctx.send(
+        f"❌ **{ctx.author.display_name}** is no longer bound to **{character['character_name'].title()}**."
+    )
 
 @bot.command()
 async def mybind(ctx):
-    character_name = USER_BINDINGS.get(ctx.author.id)
+    character = get_character_by_discord_user_id(ctx.author.id)
 
-    if character_name:
-        await ctx.send(f"**{ctx.author.display_name}** is currently bound to **{character_name.title()}**.")
+    if character:
+        await ctx.send(
+            f"**{ctx.author.display_name}** is currently bound to **{character['character_name'].title()}**."
+        )
     else:
         await ctx.send("You are not currently bound to any character.")
 
@@ -576,7 +655,9 @@ async def on_message(message):
         command_name = parts[0].lower()
         extra_text = parts[1] if len(parts) > 1 else None
 
-        if command_name in CHARACTERS:
+        character = get_character(command_name)
+
+        if character:
             if not game_is_open():
                 await message.channel.send(
                     "The hunt is over for this month. Rest up — we begin again on the 1st."
