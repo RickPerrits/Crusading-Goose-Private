@@ -522,7 +522,7 @@ async def roll(ctx, *, expression: str = "1d20"):
         await ctx.send(f"That roll format looks wrong. Error: {e}")
 
 @bot.command()
-async def createcharacter(ctx, character_name: str, class_name: str):
+async def createnew(ctx, character_name: str, class_name: str):
     existing_character = get_character_by_discord_user_id(ctx.author.id)
 
     if existing_character:
@@ -594,7 +594,7 @@ async def attack(ctx):
 
     if not character:
         await ctx.send(
-            "You do not have a character yet. Use `!createcharacter name class` first."
+            "You do not have a character yet. Use `!createnew name class` first."
         )
         return
 
