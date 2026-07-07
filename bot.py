@@ -599,7 +599,6 @@ async def on_message(message):
         parts = message.content[1:].strip().split(maxsplit=1)
 
         command_name = parts[0].lower()
-        extra_text = parts[1] if len(parts) > 1 else None
 
         character = get_character(command_name)
 
