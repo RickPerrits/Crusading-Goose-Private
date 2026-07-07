@@ -12,6 +12,7 @@ from database import (
     create_level_1_character,
     bind_character_to_user,
     unbind_character_from_user,
+    seed_starting_characters,
 )
 
 from datetime import datetime
@@ -628,6 +629,12 @@ async def mybind(ctx):
         )
     else:
         await ctx.send("You are not currently bound to any character.")
+
+
+@bot.command()
+async def seedcharacters(ctx):
+    seed_starting_characters()
+    await ctx.send("🌱 Starting characters have been seeded into the database.")
 
 @bot.event
 async def on_ready():
