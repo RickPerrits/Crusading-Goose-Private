@@ -15,6 +15,7 @@ from database import (
     level_up_character_by_discord_user_id,
     has_leveled_up_this_month,
     undo_level_up_character,
+    seed_starting_characters,
 )
 
 from datetime import datetime
@@ -654,10 +655,11 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
 
     setup_database()
+    seed_starting_characters()
 
     if not monthly_bonus_picker.is_running():
         monthly_bonus_picker.start()
-    
+        
 @bot.event
 async def on_message(message):
     if message.author.bot:
