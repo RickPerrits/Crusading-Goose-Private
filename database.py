@@ -2,7 +2,7 @@ import sqlite3
 from pathlib import Path
 import random
 
-DB_NAME = Path(__file__).parent / "goosequest.db"
+DB_NAME = Path("/data/goosequest.db")
 
 def get_connection():
     return sqlite3.connect(DB_NAME)
