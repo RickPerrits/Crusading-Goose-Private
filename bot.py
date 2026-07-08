@@ -294,11 +294,14 @@ def resolve_single_attack(character_name: str, potion_effect, combat_state, atta
 
     label_text = f"{attack_label}\n" if attack_label else ""
 
+    if d20_roll == 1:
+        total_damage = 0
+        damage_display = "none"
+
     attack_text = (
         f"{label_text}"
         f"Attack: {attack_display}\n"
-        f"Damage: **{total_damage} Total**\n"
-        f"({damage_display})"
+        f"Damage: **{total_damage} Total** ({damage_display})"
     )
 
     if d20_roll in (20, 1):
