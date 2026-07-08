@@ -410,6 +410,7 @@ def undo_level_up_character(character_name, month):
         return None
 
     conn = get_connection()
+    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
 
     cursor.execute("""
@@ -438,16 +439,16 @@ def undo_level_up_character(character_name, month):
                 current_hp = ?
             WHERE id = ?
         """, (
-            history[3],  # old_level
-            history[5],  # old_max_hp
-            history[5],  # current_hp back to old max
+            history["old_level"],
+            history["old_max_hp"],
+            history["old_max_hp"],
             character["id"]
         ))
 
         cursor.execute("""
             DELETE FROM level_up_history
             WHERE id = ?
-        """, (history[0],))
+        """, (history["id"],))
 
         conn.commit()
 
@@ -460,12 +461,67 @@ def undo_level_up_character(character_name, month):
 
     return {
         "character_name": character["character_name"],
-        "old_level": history[3],
-        "new_level": history[4],
-        "old_max_hp": history[5],
-        "new_max_hp": history[6],
-        "hp_gain": history[7],
+        "old_level": history["old_level"],
+        "new_level": history["new_level"],
+        "old_max_hp": history["old_max_hp"],
+        "new_max_hp": history["new_max_hp"],
+        "hp_gain": history["hp_gain"],
     }
+
+def damage_character_by_discord_user_id(discord_user_id, damage_amount):
+    character = get_character_by_discord_user_id(discord_user_id)
+
+    if character is None:
+        return None
+
+    old_hp = character["current_hp"]
+    new_hp = max(old_hp - damage_amount, 0)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE characters
+        SET current_hp = ?
+        WHERE discord_user_id = ?
+    """, (
+        new_hp,
+        discord_user_id
+    ))
+
+    conn.commit()
+    conn.close()
+
+    character["current_hp"] = new_hp
+
+    return {
+        "character": character,
+        "old_hp": old_hp,
+        "new_hp": new_hp,
+        "damage_taken": damage_amount,
+    }
+
+def heal_character_full_by_discord_user_id(discord_user_id):
+    character = get_character_by_discord_user_id(discord_user_id)
+
+    if character is None:
+        return None
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE characters
+        SET current_hp = max_hp
+        WHERE discord_user_id = ?
+    """, (discord_user_id,))
+
+    conn.commit()
+    conn.close()
+
+    character["current_hp"] = character["max_hp"]
+
+    return character
 
 def save_bonus_day(month, day, potion_key, target_discord_id=None, target_name=None):
     conn = get_connection()

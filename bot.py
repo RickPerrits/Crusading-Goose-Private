@@ -15,6 +15,8 @@ from database import (
     level_up_character_by_discord_user_id,
     has_leveled_up_this_month,
     undo_level_up_character,
+    damage_character_by_discord_user_id,
+    heal_character_full_by_discord_user_id,
 )
 
 from datetime import datetime
@@ -341,7 +343,15 @@ def run_character_attack(character_name: str):
         combat_state["damage_bonus"] += 4
 
     elif potion_effect == "heal_full":
-        manual_bonus_note = "❤️ Healing is not tracked by the bot yet, but today you restore yourself to full health!"
+        healed_character = heal_character_full_by_discord_user_id(profile["discord_user_id"])
+
+        if healed_character:
+            profile = healed_character
+
+            manual_bonus_note = (
+                f"❤️ You restore yourself to full health! "
+                f"HP: **{healed_character['current_hp']}/{healed_character['max_hp']}**"
+            )
 
     elif potion_effect == "reroll_previous":
         manual_bonus_note = "🎲 Reroll tracking is not automated yet. Contact the GM to reroll one previous roll."
@@ -373,6 +383,14 @@ def run_character_attack(character_name: str):
             "Please contact the GM to create a new character."
         )
 
+    if profile["current_hp"] <= 0 and potion_effect != "heal_full":
+        response += (
+            f"💤 **{character_name.title()}** is unconscious!\n"
+            "You can still record the workout, but you cannot deal damage until healed.\n"
+            "Damage: **0 Total** (unconscious)"
+        )
+        return response
+
     response += f"🎲 **{character_name.title()}** attacks!\n"
 
     if potion_effect == "extra_attack":
@@ -395,6 +413,24 @@ def run_character_attack(character_name: str):
             f"{second_attack['text']}"
         )
 
+        for attack_result in [first_attack, second_attack]:
+            if not attack_result["hit"]:
+                if combat_state["invulnerable"]:
+                    response += "\n🛡️ The monster strikes back, but your invulnerability protects you!"
+                else:
+                    counter_damage = random.randint(1, 4)
+                    damage_result = damage_character_by_discord_user_id(
+                        profile["discord_user_id"],
+                        counter_damage
+                    )
+
+                    if damage_result:
+                        response += (
+                            f"\n💥 The monster strikes back! You took **1d4[{counter_damage}]** damage "
+                            f"and are now at **{damage_result['new_hp']}/{damage_result['character']['max_hp']} HP**."
+                            "\n🪿 Don’t give up — the Goose still believes in you!"
+                        )
+    
     else:
         attack_result = resolve_single_attack(
             character_name,
@@ -403,6 +439,23 @@ def run_character_attack(character_name: str):
         )
 
         response += attack_result["text"]
+
+        if not attack_result["hit"]:
+            if combat_state["invulnerable"]:
+                response += "\n🛡️ The monster strikes back, but your invulnerability protects you!"
+            else:
+                counter_damage = random.randint(1, 4)
+                damage_result = damage_character_by_discord_user_id(
+                    profile["discord_user_id"],
+                    counter_damage
+                )
+
+                if damage_result:
+                    response += (
+                        f"\n💥 The monster strikes back! You took **1d4[{counter_damage}]** damage "
+                        f"and are now at **{damage_result['new_hp']}/{damage_result['character']['max_hp']} HP**."
+                        "\n🪿 Don’t give up — the Goose still believes in you!"
+                    )
 
     if combat_state["invulnerable"]:
         response += "\n🛡️ You are invulnerable today and take no damage from this attack!"
