@@ -17,6 +17,7 @@ from database import (
     undo_level_up_character,
     damage_character_by_discord_user_id,
     heal_character_full_by_discord_user_id,
+    get_all_bonus_days_for_month,
 )
 
 from datetime import datetime
@@ -514,6 +515,32 @@ async def pickbonus(ctx):
             "🎁 Bonus days have already been chosen for this month."
         )
     
+@bot.command()
+@commands.has_permissions(manage_guild=True)
+async def peek(ctx):
+    month = get_current_month_key()
+
+    bonus_days = get_all_bonus_days_for_month(month)
+
+    if not bonus_days:
+        await ctx.send(
+            "No bonus days have been generated for this month yet."
+        )
+        return
+
+    response = "🪿 **The Crusading Goose whispers his secrets...**\n\n"
+
+    for day, potion_key in bonus_days:
+        potion = POTIONS[potion_key]
+        response += (
+            f"{month}-{day:02d} - "
+            f"{potion['emoji']} {potion['name']}\n"
+        )
+
+    response += "\nPlease pretend to be surprised when they happen."
+
+    await ctx.send(response)
+
 @bot.command()
 async def roll(ctx, *, expression: str = "1d20"):
     try:

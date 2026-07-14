@@ -633,6 +633,22 @@ def generate_monthly_bonus_days(month, potion_keys):
 
     return True
 
+def get_all_bonus_days_for_month(month):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT day, potion_key
+        FROM bonus_days
+        WHERE month = ?
+        ORDER BY day ASC
+    """, (month,))
+
+    results = cursor.fetchall()
+    conn.close()
+
+    return results
+
 if __name__ == "__main__":
     setup_database()
     seed_starting_characters()
