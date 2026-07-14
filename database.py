@@ -613,18 +613,39 @@ def bonus_days_exist_for_month(month):
 
     return count > 0
 
-def generate_monthly_bonus_days(month, potion_keys):
+def generate_monthly_bonus_days(month, potion_keys, current_day=1):
     if bonus_days_exist_for_month(month):
         return False
 
-    chosen_days = [
-        random.randint(2, 7),
-        random.randint(8, 14),
-        random.randint(15, 21),
-        random.randint(22, 28),
+    bonus_ranges = [
+        (2, 7),
+        (8, 14),
+        (15, 21),
+        (22, 28),
     ]
 
-    chosen_potions = random.sample(potion_keys, 4)
+    available_ranges = []
+
+    for start_day, end_day in bonus_ranges:
+        earliest_available_day = max(start_day, current_day)
+
+        if earliest_available_day <= end_day:
+            available_ranges.append(
+                (earliest_available_day, end_day)
+            )
+
+    if not available_ranges:
+        return False
+
+    chosen_days = [
+        random.randint(start_day, end_day)
+        for start_day, end_day in available_ranges
+    ]
+
+    chosen_potions = random.sample(
+        potion_keys,
+        len(chosen_days)
+    )
 
     clear_bonus_days_not_for_month(month)
 

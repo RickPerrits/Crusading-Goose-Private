@@ -482,38 +482,30 @@ def get_todays_bonus_potion(discord_user_id=None):
 @tasks.loop(hours=1)
 async def monthly_bonus_picker():
     eastern_now = datetime.now(ZoneInfo("America/New_York"))
-
-    if eastern_now.day != 1:
-        return
-
     month = eastern_now.strftime("%Y-%m")
 
     created = generate_monthly_bonus_days(
         month,
-        list(POTIONS.keys())
+        list(POTIONS.keys()),
+        current_day=eastern_now.day
     )
 
     if created:
-        print(f"Monthly bonus days generated for {month}.")
+        print(
+            f"Monthly bonus days generated for {month} "
+            f"starting from day {eastern_now.day}."
+        )
 
 @bot.command()
 async def pickbonus(ctx):
-    month = get_current_month_key()
+    eastern_now = datetime.now(ZoneInfo("America/New_York"))
+    month = eastern_now.strftime("%Y-%m")
 
     created = generate_monthly_bonus_days(
         month,
-        list(POTIONS.keys())
+        list(POTIONS.keys()),
+        current_day=eastern_now.day
     )
-
-    if created:
-        await ctx.send(
-            "🎁 **This month's bonus days have been secretly chosen and saved!**\n"
-            "The rewards will be revealed on the day they appear."
-        )
-    else:
-        await ctx.send(
-            "🎁 Bonus days have already been chosen for this month."
-        )
     
 @bot.command()
 @commands.has_permissions(manage_guild=True)
