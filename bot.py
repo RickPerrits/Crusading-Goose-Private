@@ -1,10 +1,3 @@
-Library
-/
-discord bot
-/
-bot_updated.py
-
-
 import discord
 from discord.ext import commands, tasks
 import random
@@ -43,6 +36,8 @@ ALLOWED_GUILD_ID = 1191364494971125780
 ALLOWED_CHANNEL_IDS = {
     1191366125099950221,
 }
+
+BONUS_DAY_CHANNEL_ID = 1191365763391569940
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -526,12 +521,11 @@ async def bonus_day_announcer():
 
     sent_to_any_channel = False
 
-    for channel_id in ALLOWED_CHANNEL_IDS:
-        channel = bot.get_channel(channel_id)
+    channel = bot.get_channel(BONUS_DAY_CHANNEL_ID)
 
-        if channel is not None:
-            await channel.send(announcement)
-            sent_to_any_channel = True
+    if channel is not None:
+        await channel.send(announcement)
+        sent_to_any_channel = True
 
     if sent_to_any_channel:
         mark_bonus_day_announced(month, day)
