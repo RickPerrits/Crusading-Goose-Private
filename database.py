@@ -104,6 +104,15 @@ def setup_database():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS bonus_day_announcements (
+            month TEXT NOT NULL,
+            day INTEGER NOT NULL,
+            announced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (month, day)
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS level_up_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             character_id INTEGER NOT NULL,
@@ -674,3 +683,32 @@ if __name__ == "__main__":
     setup_database()
     seed_starting_characters()
     print("Database created successfully!")
+
+
+def has_bonus_day_been_announced(month, day):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT 1
+        FROM bonus_day_announcements
+        WHERE month = ?
+        AND day = ?
+        LIMIT 1
+    """, (month, day))
+
+    announced = cursor.fetchone() is not None
+    conn.close()
+    return announced
+
+def mark_bonus_day_announced(month, day):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT OR IGNORE INTO bonus_day_announcements (month, day)
+        VALUES (?, ?)
+    """, (month, day))
+
+    conn.commit()
+    conn.close()

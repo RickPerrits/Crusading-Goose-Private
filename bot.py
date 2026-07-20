@@ -1,3 +1,10 @@
+Library
+/
+discord bot
+/
+bot_updated.py
+
+
 import discord
 from discord.ext import commands, tasks
 import random
@@ -18,9 +25,11 @@ from database import (
     damage_character_by_discord_user_id,
     heal_character_full_by_discord_user_id,
     get_all_bonus_days_for_month,
+    has_bonus_day_been_announced,
+    mark_bonus_day_announced,
 )
 
-from datetime import datetime
+from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
 def game_is_open():
@@ -419,7 +428,7 @@ def run_character_attack(character_name: str):
                 if combat_state["invulnerable"]:
                     response += "\n🛡️ The monster strikes back, but your invulnerability protects you!"
                 else:
-                    counter_damage = random.randint(1, 4)
+                    counter_damage = 1
                     damage_result = damage_character_by_discord_user_id(
                         profile["discord_user_id"],
                         counter_damage
@@ -445,7 +454,7 @@ def run_character_attack(character_name: str):
             if combat_state["invulnerable"]:
                 response += "\n🛡️ The monster strikes back, but your invulnerability protects you!"
             else:
-                counter_damage = random.randint(1, 4)
+                counter_damage = 1
                 damage_result = damage_character_by_discord_user_id(
                     profile["discord_user_id"],
                     counter_damage
@@ -495,6 +504,41 @@ async def monthly_bonus_picker():
             f"Monthly bonus days generated for {month} "
             f"starting from day {eastern_now.day}."
         )
+
+
+@tasks.loop(time=time(hour=12, minute=0, tzinfo=ZoneInfo("America/New_York")))
+async def bonus_day_announcer():
+    eastern_now = datetime.now(ZoneInfo("America/New_York"))
+    month = eastern_now.strftime("%Y-%m")
+    day = eastern_now.day
+
+    potion_key = get_bonus_day(month, day)
+
+    if potion_key is None or has_bonus_day_been_announced(month, day):
+        return
+
+    potion = POTIONS[potion_key]
+    announcement = (
+        "🧪 **BONUS DAY!**\n\n"
+        f"{potion['emoji']} **{potion['name']}**\n"
+        f"{potion['description']}"
+    )
+
+    sent_to_any_channel = False
+
+    for channel_id in ALLOWED_CHANNEL_IDS:
+        channel = bot.get_channel(channel_id)
+
+        if channel is not None:
+            await channel.send(announcement)
+            sent_to_any_channel = True
+
+    if sent_to_any_channel:
+        mark_bonus_day_announced(month, day)
+
+@bonus_day_announcer.before_loop
+async def before_bonus_day_announcer():
+    await bot.wait_until_ready()
 
 @bot.command()
 async def pickbonus(ctx):
@@ -732,6 +776,9 @@ async def on_ready():
 
     if not monthly_bonus_picker.is_running():
         monthly_bonus_picker.start()
+
+    if not bonus_day_announcer.is_running():
+        bonus_day_announcer.start()
 
 @bot.event
 async def on_message(message):
