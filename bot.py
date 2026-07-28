@@ -2,6 +2,20 @@ import discord
 from discord.ext import commands, tasks
 import random
 import re
+from combat import roll_dice_expression, run_character_attack
+from items import POTIONS
+from monsters import (
+    calculate_monster_quantity,
+    choose_monster,
+    get_party_average_level,
+)
+from config import (
+    ALLOWED_GUILD_ID,
+    ALLOWED_CHANNEL_IDS,
+    BONUS_DAY_CHANNEL_ID,
+    TIMEZONE,
+)
+
 from database import (
     setup_database,
     save_bonus_day,
@@ -20,472 +34,33 @@ from database import (
     get_all_bonus_days_for_month,
     has_bonus_day_been_announced,
     mark_bonus_day_announced,
+    get_active_party_characters,
+    get_monthly_monster,
+    save_monthly_monster,
 )
 
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
 def game_is_open():
-    eastern_now = datetime.now(ZoneInfo("America/New_York"))
+    eastern_now = datetime.now(ZoneInfo(TIMEZONE))
     return 1 <= eastern_now.day <= 28
 
 intents = discord.Intents.default()
 intents.message_content = True
 
-ALLOWED_GUILD_ID = 1191364494971125780
-ALLOWED_CHANNEL_IDS = {
-    1191366125099950221,
-}
 
-BONUS_DAY_CHANNEL_ID = 1191365763391569940
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-POTIONS = {
-    "healing": {
-        "name": "Potion of Healing",
-        "emoji": "❤️",
-        "description": "All Hail the Healers! Restore yourself to full health!",
-        "effect": "heal_full",
-    },
-
-    "speed": {
-        "name": "Potion of Speed",
-        "emoji": "⚡",
-        "description": "Immediately make a second attack, at the risk of taking damage from both attacks.",
-        "effect": "extra_attack",
-    },
-
-    "sharpness": {
-        "name": "Oil of Sharpness",
-        "emoji": "🗡️",
-        "description": "Looking Sharp! +4 Attack and +4 Damage today.",
-        "effect": "plus_four",
-    },
-
-    "luck": {
-        "name": "Potion of Luck",
-        "emoji": "🍀",
-        "description": "Your attack roll becomes 11! Were you saved from a nat1? Or robbed of a Nat20? Maybe! It doesn't matter, today your roll is an 11!",
-        "effect": "attack_becomes_11",
-    },
-
-    "grossness": {
-        "name": "Potion of Grossness",
-        "emoji": "🤢",
-        "description": "Whoops, wrong potion, you now Attack at Disadvantage.",
-        "effect": "disadvantage",
-    },
-
-    "invulnerability": {
-        "name": "Potion of Invulnerability",
-        "emoji": "🛡️",
-        "description": "You take no damage today!",
-        "effect": "no_damage_taken",
-    },
-
-    "possibilities": {
-        "name": "Potion of Possibilities",
-        "emoji": "🎲",
-        "description": "Reroll one previous roll.",
-        "effect": "reroll_previous",
-    },
-
-    "wealth": {
-        "name": "Potion of Wealth",
-        "emoji": "💰",
-        "description": "All items in the shop are sold for Half Price!",
-        "effect": "sale",
-    },
-}
-
-NAT_20_MESSAGES = [
-    "🔥 **NAT 20!** The dice gods are smiling!",
-    "⚔️ **CRITICAL SUCCESS!** That could not have gone better!",
-    "🌟 **NAT 20!** A legendary moment unfolds!",
-    "🎯 **Perfect roll!** Absolute mastery!",
-    "👑 **NAT 20!** You were born for this moment!",
-]
-
-NAT_1_MESSAGES = [
-    "💀 **NAT 1!** Fate has betrayed you.",
-    "🍌 **Critical failure!** You somehow make it worse.",
-    "😵 **NAT 1!** Disaster arrives right on cue.",
-    "🪦 **Critical fail!** The dice have chosen violence.",
-    "🤦 **NAT 1!** That was impressively unfortunate.",
-]
-
-HIT_MESSAGES = [
-    "✅ **Hit!** Clean and effective.",
-    "🗡️ **Solid strike!** That one lands.",
-    "🎯 **Hit!** Right where it needed to go.",
-    "⚔️ **Success!** A telling blow connects.",
-]
-
-MISS_MESSAGES = [
-    "❌ **Miss!** Just off the mark.",
-    "💨 **Miss!** Nothing but air.",
-    "😬 **Miss!** That could have gone better.",
-    "🌫️ **Miss!** Close, but not enough.",
-]
-
-dice_pattern = re.compile(r'([+-]?)(\d*)d(\d+)|([+-]?\d+)')
-
-
-def roll_dice_expression(expression: str):
-    expression = expression.replace(" ", "").lower()
-    matches = list(dice_pattern.finditer(expression))
-
-    total = 0
-    breakdown = []
-
-    for match in matches:
-        sign, num_dice, die_size, flat_number = match.groups()
-
-        if flat_number:
-            value = int(flat_number)
-            total += value
-            if value >= 0:
-                breakdown.append(f"+{value}" if breakdown else str(value))
-            else:
-                breakdown.append(str(value))
-            continue
-
-        sign_multiplier = -1 if sign == "-" else 1
-        num_dice = int(num_dice) if num_dice else 1
-        die_size = int(die_size)
-
-        rolls = [random.randint(1, die_size) for _ in range(num_dice)]
-        subtotal = sum(rolls) * sign_multiplier
-        total += subtotal
-
-        prefix = "-" if sign_multiplier == -1 else "+"
-        if not breakdown:
-            prefix = "-" if sign_multiplier == -1 else ""
-
-        breakdown.append(f"{prefix}{num_dice}d{die_size}{rolls}")
-
-    return total, " ".join(breakdown)
-
-
-def roll_single_d20():
-    value = random.randint(1, 20)
-    return value, f"1d20[{value}]"
-
-def get_attack_roll(potion_effect):
-    if potion_effect == "attack_becomes_11":
-        d20_roll, d20_breakdown = roll_single_d20()
-        return 11, f"{d20_breakdown}. 🍀 Lucky! It's an 11!"
-
-    if potion_effect == "disadvantage":
-        roll_one, breakdown_one = roll_single_d20()
-        roll_two, breakdown_two = roll_single_d20()
-        lower_roll = min(roll_one, roll_two)
-
-        return (
-            lower_roll,
-            f"{breakdown_one}, {breakdown_two}\n🤢 Disadvantage! Using {lower_roll}."
-        )
-
-    d20_roll, d20_breakdown = roll_single_d20()
-    return d20_roll, d20_breakdown
-
-def get_nat_text(d20_roll):
-    if d20_roll == 20:
-        return "\n" + random.choice(NAT_20_MESSAGES)
-    if d20_roll == 1:
-        return "\n" + random.choice(NAT_1_MESSAGES)
-    return ""
-
-
-def get_hit_or_miss_text(hit):
-    if hit:
-        return "\n" + random.choice(HIT_MESSAGES)
-    return "\n" + random.choice(MISS_MESSAGES)
-
-def resolve_single_attack(character_name: str, potion_effect, combat_state, attack_label=None):
-    profile = get_character(character_name)
-
-    if profile is None:
-        return {
-            "hit": False,
-            "damage_dealt": 0,
-            "attack_roll": None,
-            "text": f"❌ I couldn't find a character named **{character_name.title()}**."
-        }
-    
-    hit_threshold = profile["hit_threshold"]
-
-    d20_roll, d20_breakdown = get_attack_roll(potion_effect)
-    nat_text = get_nat_text(d20_roll)
-
-    helper_total = 0
-    helper_breakdown = ""
-    damage_breakdown = ""
-    base_damage_breakdown = ""
-
-    attack_total_without_helpers = d20_roll + combat_state["attack_bonus"]
-    original_hit = attack_total_without_helpers >= hit_threshold
-
-    if original_hit:
-        hit = True
-
-        if profile["helper_dice"]:
-            helper_total, helper_breakdown = roll_dice_expression(profile["helper_dice"])
-        else:
-            helper_total, helper_breakdown = 0, ""
-
-        base_damage_total, base_damage_breakdown = roll_dice_expression(profile["damage_die"])
-
-    else:
-        if profile["helper_dice"]:
-            helper_total, helper_breakdown = roll_dice_expression(profile["helper_dice"])
-        else:
-            helper_total, helper_breakdown = 0, ""
-
-        attack_total = d20_roll + helper_total + combat_state["attack_bonus"]
-        hit = attack_total >= hit_threshold
-
-        if hit:
-            damage_total, damage_breakdown = roll_dice_expression(profile["damage_die"])
-        else:
-            damage_breakdown = "none"
-
-    flavor_text = get_hit_or_miss_text(hit)
-
-    attack_bonus_display = (
-        f" +{combat_state['attack_bonus']}"
-        if combat_state["attack_bonus"]
-        else ""
-    )
-
-    if original_hit:
-        attack_display = f"{d20_breakdown}{attack_bonus_display}"
-    else:
-        attack_display = f"{d20_breakdown}{attack_bonus_display} {helper_breakdown}".strip()
-
-    damage_bonus_display = (
-        f" +{combat_state['damage_bonus']}"
-        if combat_state["damage_bonus"] and hit
-        else ""
-    )
-
-    if hit:
-        if original_hit:
-            total_damage = (
-                base_damage_total
-                + helper_total
-                + combat_state["damage_bonus"]
-            )
-
-            damage_display = (
-                f"{base_damage_breakdown} "
-                f"{helper_breakdown}"
-                f"{damage_bonus_display}"
-            ).strip()
-
-        else:
-            total_damage = (
-                damage_total
-                + combat_state["damage_bonus"]
-            )
-
-            damage_display = (
-                f"{damage_breakdown}"
-                f"{damage_bonus_display}"
-            ).strip()
-
-    else:
-        total_damage = 0
-        damage_display = "none"
-
-    label_text = f"{attack_label}\n" if attack_label else ""
-
-    if d20_roll == 1:
-        total_damage = 0
-        damage_display = "none"
-
-    attack_text = (
-        f"{label_text}"
-        f"Attack: {attack_display}\n"
-        f"Damage: **{total_damage} Total** ({damage_display})"
-    )
-
-    if d20_roll in (20, 1):
-        attack_text += nat_text
-    else:
-        attack_text += flavor_text
-
-    return {
-        "hit": hit,
-        "damage_dealt": total_damage,
-        "attack_roll": d20_roll,
-        "text": attack_text,
-    }
-
-def run_character_attack(character_name: str):
-    profile = get_character(character_name)
-
-    if profile is None:
-        return f"❌ I couldn't find a character named **{character_name.title()}**."
-
-    todays_potion = get_todays_bonus_potion()
-    potion_effect = todays_potion["effect"] if todays_potion else None
-
-    combat_state = {
-        "attack_bonus": 0,
-        "damage_bonus": 0,
-        "invulnerable": False,
-    }
-
-    manual_bonus_note = None
-
-    if potion_effect == "no_damage_taken":
-        combat_state["invulnerable"] = True
-
-    elif potion_effect == "plus_four":
-        combat_state["attack_bonus"] += 4
-        combat_state["damage_bonus"] += 4
-
-    elif potion_effect == "heal_full":
-        healed_character = heal_character_full_by_discord_user_id(profile["discord_user_id"])
-
-        if healed_character:
-            profile = healed_character
-
-            manual_bonus_note = (
-                f"❤️ You restore yourself to full health! "
-                f"HP: **{healed_character['current_hp']}/{healed_character['max_hp']}**"
-            )
-
-    elif potion_effect == "reroll_previous":
-        manual_bonus_note = "🎲 Reroll tracking is not automated yet. Contact the GM to reroll one previous roll."
-
-    elif potion_effect == "extra_attack":
-        pass
-
-    elif potion_effect == "attack_becomes_11":
-        pass
-    
-    elif potion_effect == "sale":
-        manual_bonus_note = "💰 Shop prices are not tracked by the bot yet. The GM will honor today's half-price sale."
-
-    if todays_potion:
-        response = (
-            "🧪 **BONUS DAY!**\n\n"
-            f"{todays_potion['emoji']} **{todays_potion['name']}**\n"
-            f"{todays_potion['description']}\n\n"
-        )
-    else:
-        response = ""
-
-    if manual_bonus_note:
-        response += manual_bonus_note + "\n\n"
-    
-    if profile.get("dead", False):
-        return (
-            f"☠️ **{character_name.title()}**, your character has perished. "
-            "Please contact the GM to create a new character."
-        )
-
-    if profile["current_hp"] <= 0 and potion_effect != "heal_full":
-        response += (
-            f"💤 **{character_name.title()}** is unconscious!\n"
-            "You can still record the workout, but you cannot deal damage until healed.\n"
-            "Damage: **0 Total** (unconscious)"
-        )
-        return response
-
-    response += f"🎲 **{character_name.title()}** attacks!\n"
-
-    if potion_effect == "extra_attack":
-        first_attack = resolve_single_attack(
-            character_name,
-            None,
-            combat_state,
-            attack_label="⚡ **First Attack**"
-        )
-
-        second_attack = resolve_single_attack(
-            character_name,
-            None,
-            combat_state,
-            attack_label="⚡ **Second Attack**"
-        )
-
-        response += (
-            f"{first_attack['text']}\n\n"
-            f"{second_attack['text']}"
-        )
-
-        for attack_result in [first_attack, second_attack]:
-            if not attack_result["hit"]:
-                if combat_state["invulnerable"]:
-                    response += "\n🛡️ The monster strikes back, but your invulnerability protects you!"
-                else:
-                    counter_damage = 1
-                    damage_result = damage_character_by_discord_user_id(
-                        profile["discord_user_id"],
-                        counter_damage
-                    )
-
-                    if damage_result:
-                        response += (
-                            f"\n💥 The monster strikes back! You took **1d4[{counter_damage}]** damage "
-                            f"and are now at **{damage_result['new_hp']}/{damage_result['character']['max_hp']} HP**."
-                            "\n🪿 Don’t give up — the Goose still believes in you!"
-                        )
-    
-    else:
-        attack_result = resolve_single_attack(
-            character_name,
-            potion_effect,
-            combat_state
-        )
-
-        response += attack_result["text"]
-
-        if not attack_result["hit"]:
-            if combat_state["invulnerable"]:
-                response += "\n🛡️ The monster strikes back, but your invulnerability protects you!"
-            else:
-                counter_damage = 1
-                damage_result = damage_character_by_discord_user_id(
-                    profile["discord_user_id"],
-                    counter_damage
-                )
-
-                if damage_result:
-                    response += (
-                        f"\n💥 The monster strikes back! You took **1d4[{counter_damage}]** damage "
-                        f"and are now at **{damage_result['new_hp']}/{damage_result['character']['max_hp']} HP**."
-                        "\n🪿 Don’t give up — the Goose still believes in you!"
-                    )
-
-    if combat_state["invulnerable"]:
-        response += "\n🛡️ You are invulnerable today and take no damage from this attack!"
-
-    return response
-
 def get_current_month_key():
-    eastern_now = datetime.now(ZoneInfo("America/New_York"))
+    eastern_now = datetime.now(ZoneInfo(TIMEZONE))
     return eastern_now.strftime("%Y-%m")
 
-def get_todays_bonus_potion(discord_user_id=None):
-    eastern_now = datetime.now(ZoneInfo("America/New_York"))
-    month = eastern_now.strftime("%Y-%m")
-    day = eastern_now.day
-
-    potion_key = get_bonus_day(month, day, discord_user_id)
-
-    if potion_key is None:
-        return None
-
-    return POTIONS[potion_key]
 
 @tasks.loop(hours=1)
 async def monthly_bonus_picker():
-    eastern_now = datetime.now(ZoneInfo("America/New_York"))
+    eastern_now = datetime.now(ZoneInfo(TIMEZONE))
     month = eastern_now.strftime("%Y-%m")
 
     created = generate_monthly_bonus_days(
@@ -501,9 +76,9 @@ async def monthly_bonus_picker():
         )
 
 
-@tasks.loop(time=time(hour=12, minute=0, tzinfo=ZoneInfo("America/New_York")))
+@tasks.loop(time=time(hour=12, minute=0, tzinfo=ZoneInfo(TIMEZONE)))
 async def bonus_day_announcer():
-    eastern_now = datetime.now(ZoneInfo("America/New_York"))
+    eastern_now = datetime.now(ZoneInfo(TIMEZONE))
     month = eastern_now.strftime("%Y-%m")
     day = eastern_now.day
 
@@ -536,7 +111,7 @@ async def before_bonus_day_announcer():
 
 @bot.command()
 async def pickbonus(ctx):
-    eastern_now = datetime.now(ZoneInfo("America/New_York"))
+    eastern_now = datetime.now(ZoneInfo(TIMEZONE))
     month = eastern_now.strftime("%Y-%m")
 
     created = generate_monthly_bonus_days(
@@ -570,6 +145,85 @@ async def peek(ctx):
     response += "\nPlease pretend to be surprised when they happen."
 
     await ctx.send(response)
+
+
+def format_monthly_monster(monster):
+    return (
+        f"👹 **Monster of the Month: {monster['monster_name']}**\n"
+        f"Threat Level: **{monster['threat_level']}**\n"
+        f"Quantity: **{monster['quantity']}**\n"
+        f"HP each: **{monster['hit_points']}**\n"
+        f"AC: **{monster['armor_class']}**\n"
+        f"Counter Damage: **{monster['counter_damage']}**\n"
+        f"Party: **{monster['party_size']} characters** "
+        f"(average level **{monster['party_average_level']:.2f}**)"
+    )
+
+
+@bot.command()
+@commands.has_permissions(manage_guild=True)
+async def pickmonster(ctx, month: str = None):
+    month = month or get_current_month_key()
+
+    if not re.fullmatch(r"\d{4}-\d{2}", month):
+        await ctx.send("❌ Use a month like `2026-08`.")
+        return
+    existing_monster = get_monthly_monster(month)
+
+    if existing_monster:
+        await ctx.send(
+            "🔒 This month's monster is already locked.\n\n"
+            + format_monthly_monster(existing_monster)
+        )
+        return
+
+    characters = get_active_party_characters()
+
+    if not characters:
+        await ctx.send("❌ There are no living characters available for monster selection.")
+        return
+
+    average_level = get_party_average_level(characters)
+    monster = choose_monster(average_level, allow_restricted=False)
+
+    if monster is None:
+        await ctx.send("❌ No eligible monsters were found for this party.")
+        return
+
+    quantity = calculate_monster_quantity(monster, characters)
+    saved = save_monthly_monster(
+        month,
+        monster,
+        average_level,
+        len(characters),
+        quantity,
+    )
+
+    if not saved:
+        await ctx.send("❌ I couldn't lock the monthly monster.")
+        return
+
+    monthly_monster = get_monthly_monster(month)
+    await ctx.send(
+        "🪿 **The Crusading Goose has chosen the hunt!**\n\n"
+        + format_monthly_monster(monthly_monster)
+    )
+
+
+@bot.command()
+async def currentmonster(ctx, month: str = None):
+    month = month or get_current_month_key()
+
+    if not re.fullmatch(r"\d{4}-\d{2}", month):
+        await ctx.send("❌ Use a month like `2026-08`.")
+        return
+    monster = get_monthly_monster(month)
+
+    if monster is None:
+        await ctx.send("No monster has been selected for this month yet.")
+        return
+
+    await ctx.send(format_monthly_monster(monster))
 
 @bot.command()
 async def roll(ctx, *, expression: str = "1d20"):

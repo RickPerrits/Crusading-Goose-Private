@@ -2,45 +2,16 @@ import sqlite3
 from pathlib import Path
 import random
 
+from classes import (
+    CLASS_RULES,
+    get_damage_die_for_class,
+    get_helper_dice_for_level,
+)
+
 DB_NAME = Path("/data/goosequest.db")
 
 def get_connection():
     return sqlite3.connect(DB_NAME)
-
-CLASS_RULES = {
-    "wizard": {"damage_die": "1d6", "starting_hp": 6},
-    "sorcerer": {"damage_die": "1d6", "starting_hp": 6},
-
-    "warlock": {"damage_die": "1d8", "starting_hp": 8},
-    "rogue": {"damage_die": "1d8", "starting_hp": 8},
-    "monk": {"damage_die": "1d8", "starting_hp": 8},
-    "cleric": {"damage_die": "1d8", "starting_hp": 8},
-    "druid": {"damage_die": "1d8", "starting_hp": 8},
-    "bard": {"damage_die": "1d8", "starting_hp": 8},
-
-    "ranger": {"damage_die": "1d10", "starting_hp": 10},
-    "paladin": {"damage_die": "1d10", "starting_hp": 10},
-    "fighter": {"damage_die": "1d10", "starting_hp": 10},
-
-    "barbarian": {"damage_die": "1d12", "starting_hp": 12},
-}
-
-def get_helper_dice_for_level(level):
-    helper_count = level - 1
-
-    if helper_count <= 0:
-        return None
-
-    return f"{helper_count}d4"
-
-
-def get_damage_die_for_class(class_name):
-    class_key = class_name.lower()
-
-    if class_key not in CLASS_RULES:
-        raise ValueError(f"Unknown class: {class_name}")
-
-    return CLASS_RULES[class_key]["damage_die"]
 
 def setup_database():
     conn = get_connection()
@@ -66,7 +37,7 @@ def setup_database():
             dead INTEGER NOT NULL DEFAULT 0
         )
     """)
-    
+
     existing_columns = [
         row[1] for row in cursor.execute("PRAGMA table_info(characters)")
     ]
@@ -109,6 +80,26 @@ def setup_database():
             day INTEGER NOT NULL,
             announced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (month, day)
+        )
+    """)
+
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS monthly_monsters (
+            month TEXT PRIMARY KEY,
+            monster_name TEXT NOT NULL,
+            size TEXT,
+            creature_type TEXT,
+            alignment TEXT,
+            armor_class INTEGER NOT NULL,
+            hit_points INTEGER NOT NULL,
+            threat_level INTEGER NOT NULL,
+            counter_damage TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            party_average_level REAL NOT NULL,
+            party_size INTEGER NOT NULL,
+            quantity INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
@@ -678,6 +669,100 @@ def get_all_bonus_days_for_month(month):
     conn.close()
 
     return results
+
+
+def get_active_party_characters():
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT *
+        FROM characters
+        WHERE dead = 0
+        ORDER BY character_name
+    """)
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    characters = []
+
+    for row in rows:
+        character = dict(row)
+        character["attack_die"] = "1d20"
+        character["helper_dice"] = get_helper_dice_for_level(character["level"])
+        character["damage_die"] = get_damage_die_for_class(character["class_name"])
+        character["hit_threshold"] = 11
+        character["dead"] = bool(character["dead"])
+        characters.append(character)
+
+    return characters
+
+
+def save_monthly_monster(month, monster, party_average_level, party_size, quantity):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            INSERT INTO monthly_monsters (
+                month,
+                monster_name,
+                size,
+                creature_type,
+                alignment,
+                armor_class,
+                hit_points,
+                threat_level,
+                counter_damage,
+                source_type,
+                party_average_level,
+                party_size,
+                quantity
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            month,
+            monster["name"],
+            monster.get("size"),
+            monster.get("creature_type"),
+            monster.get("alignment"),
+            monster["armor_class"],
+            monster["hit_points"],
+            monster["threat_level"],
+            monster["counter_damage"],
+            monster.get("source_type", "open"),
+            party_average_level,
+            party_size,
+            quantity,
+        ))
+        conn.commit()
+        return True
+
+    except sqlite3.IntegrityError:
+        return False
+
+    finally:
+        conn.close()
+
+
+def get_monthly_monster(month):
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT *
+        FROM monthly_monsters
+        WHERE month = ?
+        LIMIT 1
+    """, (month,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    return dict(row) if row else None
 
 if __name__ == "__main__":
     setup_database()
