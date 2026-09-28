@@ -415,6 +415,10 @@ async def mybind(ctx):
         )
     else:
         await ctx.send("You are not currently bound to any character.")
+        
+@bot.command(name="ping")
+async def ping(ctx):
+    await ctx.send("🏓 Bot is online.")
 
 @bot.event
 async def on_ready():
