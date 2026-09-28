@@ -214,31 +214,21 @@ def resolve_single_attack(
             f"{d20_breakdown}{attack_bonus_display} {helper_breakdown}"
         ).strip()
 
-    damage_bonus_display = (
-        f" +{combat_state['damage_bonus']}"
-        if combat_state["damage_bonus"] and hit
-        else ""
-    )
-
     if hit:
         if original_hit:
             total_damage = (
                 base_damage_total
                 + helper_total
-                + combat_state["damage_bonus"]
             )
 
             damage_display = (
                 f"{base_damage_breakdown} "
                 f"{helper_breakdown}"
-                f"{damage_bonus_display}"
             ).strip()
 
         else:
-            total_damage = damage_total + combat_state["damage_bonus"]
-            damage_display = (
-                f"{damage_breakdown}{damage_bonus_display}"
-            ).strip()
+            total_damage = damage_total
+            damage_display = damage_breakdown
 
     else:
         total_damage = 0
@@ -249,6 +239,15 @@ def resolve_single_attack(
     if d20_roll == 1:
         total_damage = 0
         damage_display = "none"
+
+    if d20_roll == 20:
+        original_damage = total_damage
+        total_damage *= 2
+        damage_display = f"{original_damage} × 2 — NAT 20!"
+
+    if hit and combat_state["damage_bonus"]:
+        total_damage += combat_state["damage_bonus"]
+        damage_display += f" +{combat_state['damage_bonus']}"
 
     attack_text = (
         f"{label_text}"
