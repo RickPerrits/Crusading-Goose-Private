@@ -9,6 +9,7 @@ from database import (
     get_bonus_day,
     get_character,
     heal_character_full_by_discord_user_id,
+    apply_damage_to_monthly_monster,
 )
 from items import POTIONS
 
@@ -134,6 +135,45 @@ def get_todays_bonus_potion(discord_user_id=None):
 
     return POTIONS[potion_key]
 
+def apply_attack_damage_to_monster(attack_result):
+    damage = attack_result["damage_dealt"]
+
+    if damage <= 0:
+        return ""
+
+    eastern_now = datetime.now(ZoneInfo(TIMEZONE))
+    month = eastern_now.strftime("%Y-%m")
+
+    result = apply_damage_to_monthly_monster(
+        month,
+        damage,
+    )
+
+    if result is None:
+        return ""
+
+    defeated_count = result["monsters_defeated_this_attack"]
+
+    if result["hunt_complete"] and defeated_count > 0:
+        return (
+            f"\n\n🏆 **FINAL BLOW!** "
+            f"You defeated the last **{result['monster_name']}**!\n"
+            f"🪿 **The hunt is complete!**"
+        )
+
+    if defeated_count == 1:
+        return (
+            f"\n\n💀 You knocked out "
+            f"**1 {result['monster_name']}!**"
+        )
+
+    if defeated_count > 1:
+        return (
+            f"\n\n💀 You knocked out "
+            f"**{defeated_count} {result['monster_name']}!**"
+        )
+
+    return ""
 
 def resolve_single_attack(
     character_name: str,
@@ -390,9 +430,18 @@ def run_character_attack(character_name: str):
             attack_label="⚡ **Second Attack**",
         )
 
-        response += (
-            f"{first_attack['text']}\n\n"
-            f"{second_attack['text']}"
+        response += first_attack["text"]
+
+        response += apply_attack_damage_to_monster(
+            first_attack
+        )
+
+        response += "\n\n"
+
+        response += second_attack["text"]
+
+        response += apply_attack_damage_to_monster(
+            second_attack
         )
 
         for attack_result in (first_attack, second_attack):
@@ -411,6 +460,10 @@ def run_character_attack(character_name: str):
         )
 
         response += attack_result["text"]
+
+        response += apply_attack_damage_to_monster(
+            attack_result
+        )
 
         if not attack_result["hit"]:
             response = add_counterattack_text(

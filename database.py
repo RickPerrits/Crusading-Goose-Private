@@ -99,6 +99,8 @@ def setup_database():
             party_average_level REAL NOT NULL,
             party_size INTEGER NOT NULL,
             quantity INTEGER NOT NULL,
+            current_hp INTEGER,
+            monsters_defeated INTEGER NOT NULL DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -118,6 +120,29 @@ def setup_database():
             FOREIGN KEY (character_id) REFERENCES characters(id)
         )
     """)
+
+    monthly_monster_columns = [
+        row[1] for row in cursor.execute(
+            "PRAGMA table_info(monthly_monsters)"
+        )
+    ]
+
+    if "current_hp" not in monthly_monster_columns:
+        cursor.execute(
+            "ALTER TABLE monthly_monsters ADD COLUMN current_hp INTEGER"
+        )
+
+        cursor.execute("""
+            UPDATE monthly_monsters
+            SET current_hp = hit_points
+            WHERE current_hp IS NULL
+        """)
+
+    if "monsters_defeated" not in monthly_monster_columns:
+        cursor.execute(
+            "ALTER TABLE monthly_monsters "
+            "ADD COLUMN monsters_defeated INTEGER NOT NULL DEFAULT 0"
+        )
 
     conn.commit()
     conn.close()
@@ -719,9 +744,11 @@ def save_monthly_monster(month, monster, party_average_level, party_size, quanti
                 source_type,
                 party_average_level,
                 party_size,
-                quantity
+                quantity,
+                current_hp,
+                monsters_defeated
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             month,
             monster["name"],
@@ -736,6 +763,8 @@ def save_monthly_monster(month, monster, party_average_level, party_size, quanti
             party_average_level,
             party_size,
             quantity,
+            monster["hit_points"],
+            0,
         ))
         conn.commit()
         return True
@@ -769,6 +798,97 @@ if __name__ == "__main__":
     seed_starting_characters()
     print("Database created successfully!")
 
+def apply_damage_to_monthly_monster(month, damage_amount):
+    if damage_amount <= 0:
+        return None
+
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT *
+        FROM monthly_monsters
+        WHERE month = ?
+        LIMIT 1
+    """, (month,))
+
+    row = cursor.fetchone()
+
+    if row is None:
+        conn.close()
+        return None
+
+    monster = dict(row)
+
+    hit_points = monster["hit_points"]
+    quantity = monster["quantity"]
+    current_hp = monster["current_hp"]
+    monsters_defeated = monster["monsters_defeated"]
+
+    if current_hp is None:
+        current_hp = hit_points
+
+    starting_defeated = monsters_defeated
+    remaining_damage = damage_amount
+
+    while remaining_damage > 0 and monsters_defeated < quantity:
+
+        if remaining_damage >= current_hp:
+            remaining_damage -= current_hp
+            monsters_defeated += 1
+
+            if monsters_defeated >= quantity:
+                current_hp = 0
+                break
+
+            current_hp = hit_points
+
+        else:
+            current_hp -= remaining_damage
+            remaining_damage = 0
+
+    cursor.execute("""
+        UPDATE monthly_monsters
+        SET current_hp = ?,
+            monsters_defeated = ?
+        WHERE month = ?
+    """, (
+        current_hp,
+        monsters_defeated,
+        month,
+    ))
+
+    conn.commit()
+    conn.close()
+
+    monsters_defeated_this_attack = (
+        monsters_defeated - starting_defeated
+    )
+
+    if monsters_defeated >= quantity:
+        total_remaining_hp = 0
+    else:
+        monsters_after_current = (
+            quantity - monsters_defeated - 1
+        )
+
+        total_remaining_hp = (
+            current_hp
+            + (monsters_after_current * hit_points)
+        )
+
+    return {
+        "monster_name": monster["monster_name"],
+        "damage_dealt": damage_amount - remaining_damage,
+        "current_hp": current_hp,
+        "hit_points": hit_points,
+        "monsters_defeated": monsters_defeated,
+        "monsters_defeated_this_attack": monsters_defeated_this_attack,
+        "quantity": quantity,
+        "total_remaining_hp": total_remaining_hp,
+        "hunt_complete": monsters_defeated >= quantity,
+    }
 
 def has_bonus_day_been_announced(month, day):
     conn = get_connection()
