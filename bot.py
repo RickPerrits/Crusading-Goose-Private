@@ -420,6 +420,48 @@ async def mybind(ctx):
 async def ping(ctx):
     await ctx.send("🏓 Bot is online.")
 
+@bot.command()
+async def status(ctx):
+    character = get_character_by_discord_user_id(ctx.author.id)
+
+    if not character:
+        await ctx.send(
+            "You do not have a character yet. Use `!createnew name class` first.",
+            delete_after=10
+        )
+        return
+
+    helper_dice = character["helper_dice"] or "None"
+
+    response = (
+        f"🪿 **{character['character_name'].title()}'s Status**\n\n"
+
+        f"⚔️ Class: **{character['class_name'].title()}**\n"
+        f"⭐ Level: **{character['level']}**\n"
+        f"❤️ HP: **{character['current_hp']}/{character['max_hp']}**\n"
+        f"🎲 Damage Die: **{character['damage_die']}**\n"
+        f"✨ Helper Dice: **{helper_dice}**\n"
+        f"🪙 Gold: **{character['gold']}**\n\n"
+
+        f"🏋️ Workouts This Month: **Coming Soon**\n"
+        f"📅 Days Since Last Workout: **Coming Soon**\n"
+        f"🌟 Ability Charges: **Coming Soon**\n"
+        f"🎒 Equipment / Potions: **Coming Soon**"
+    )
+
+    try:
+        await ctx.author.send(response)
+
+        if ctx.guild is not None:
+            await ctx.message.add_reaction("📬")
+
+    except discord.Forbidden:
+        await ctx.send(
+            "❌ I couldn't DM you. Make sure you allow direct messages from members of this server.",
+            delete_after=10
+        )
+
+
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
