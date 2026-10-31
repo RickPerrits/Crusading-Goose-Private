@@ -485,24 +485,6 @@ async def on_message(message):
     if message.guild.id != ALLOWED_GUILD_ID:
         return
 
-    if message.content.startswith("!"):
-        parts = message.content[1:].strip().split(maxsplit=1)
-
-        command_name = parts[0].lower()
-
-        character = get_character(command_name)
-
-        if character:
-            if not game_is_open():
-                await message.channel.send(
-                    "The hunt is over for this month. Rest up — we begin again on the 1st."
-                )
-                return
-
-            response = run_character_attack(command_name)
-            await message.channel.send(response)
-            return
-
     await bot.process_commands(message)
 
 @bot.event

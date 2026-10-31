@@ -5,11 +5,10 @@ from zoneinfo import ZoneInfo
 
 from config import TIMEZONE
 from database import (
-    damage_character_by_discord_user_id,
     get_bonus_day,
     get_character,
-    heal_character_full_by_discord_user_id,
-    apply_damage_to_monthly_monster,
+    record_workout_and_apply_damage,
+    has_workout_for_date,
 )
 from items import POTIONS
 
@@ -135,20 +134,8 @@ def get_todays_bonus_potion(discord_user_id=None):
 
     return POTIONS[potion_key]
 
-def apply_attack_damage_to_monster(attack_result):
-    damage = attack_result["damage_dealt"]
 
-    if damage <= 0:
-        return ""
-
-    eastern_now = datetime.now(ZoneInfo(TIMEZONE))
-    month = eastern_now.strftime("%Y-%m")
-
-    result = apply_damage_to_monthly_monster(
-        month,
-        damage,
-    )
-
+def format_monster_damage_result(result):
     if result is None:
         return ""
 
@@ -174,6 +161,7 @@ def apply_attack_damage_to_monster(attack_result):
         )
 
     return ""
+
 
 def resolve_single_attack(
     character_name: str,
@@ -308,32 +296,6 @@ def resolve_single_attack(
     }
 
 
-def add_counterattack_text(response, profile, combat_state):
-    if combat_state["invulnerable"]:
-        return (
-            response
-            + "\n🛡️ The monster strikes back, but your "
-            "invulnerability protects you!"
-        )
-
-    counter_damage = 1
-    damage_result = damage_character_by_discord_user_id(
-        profile["discord_user_id"],
-        counter_damage,
-    )
-
-    if damage_result:
-        response += (
-            f"\n💥 The monster strikes back! You took "
-            f"**{counter_damage} HP** damage and are now at "
-            f"**{damage_result['new_hp']}/"
-            f"{damage_result['character']['max_hp']} HP**."
-            "\n🪿 Don’t give up — the Goose still believes in you!"
-        )
-
-    return response
-
-
 def run_character_attack(character_name: str):
     profile = get_character(character_name)
 
@@ -341,6 +303,17 @@ def run_character_attack(character_name: str):
         return (
             f"❌ I couldn't find a character named "
             f"**{character_name.title()}**."
+        )
+
+
+    eastern_now = datetime.now(ZoneInfo(TIMEZONE))
+    workout_date = eastern_now.strftime("%Y-%m-%d")
+
+    if has_workout_for_date(profile["id"], workout_date):
+        return (
+            f"🪿 **{character_name.title()}**, you've already "
+            f"recorded a workout today!\n"
+            "Rest up, adventurer! Your next adventure awaits tomorrow."
         )
 
     todays_potion = get_todays_bonus_potion()
@@ -352,6 +325,8 @@ def run_character_attack(character_name: str):
         "invulnerable": False,
     }
 
+    counter_damage_total = 0
+
     manual_bonus_note = None
 
     if potion_effect == "no_damage_taken":
@@ -362,17 +337,9 @@ def run_character_attack(character_name: str):
         combat_state["damage_bonus"] += 4
 
     elif potion_effect == "heal_full":
-        healed_character = heal_character_full_by_discord_user_id(
-            profile["discord_user_id"]
+        manual_bonus_note = (
+            "❤️ Your healing potion restores your HP!"
         )
-
-        if healed_character:
-            profile = healed_character
-            manual_bonus_note = (
-                "❤️ You restore yourself to full health! "
-                f"HP: **{healed_character['current_hp']}/"
-                f"{healed_character['max_hp']}**"
-            )
 
     elif potion_effect == "reroll_previous":
         manual_bonus_note = (
@@ -404,17 +371,33 @@ def run_character_attack(character_name: str):
             "Please contact the GM to create a new character."
         )
 
+    
     if profile["current_hp"] <= 0 and potion_effect != "heal_full":
+        result = record_workout_and_apply_damage(
+            profile["id"],
+            workout_date,
+            damage_rolled=0,
+            counter_damage=0
+        )
+
+        if result is None:
+            return (
+                "❌ This workout couldn't be recorded. "
+                "Please contact the GM if the problem continues."
+            )
+
         response += (
             f"💤 **{character_name.title()}** is unconscious!\n"
-            "You can still record the workout, but you cannot deal damage "
-            "until healed.\n"
+            "Your workout has been recorded, but you cannot "
+            "deal damage until healed.\n"
             "Damage: **0 Total** (unconscious)"
         )
+
         return response
 
     response += f"🎲 **{character_name.title()}** attacks!\n"
 
+    total_workout_damage = 0
     if potion_effect == "extra_attack":
         first_attack = resolve_single_attack(
             character_name,
@@ -432,25 +415,18 @@ def run_character_attack(character_name: str):
 
         response += first_attack["text"]
 
-        response += apply_attack_damage_to_monster(
-            first_attack
-        )
+        total_workout_damage += first_attack["damage_dealt"]
 
         response += "\n\n"
 
         response += second_attack["text"]
 
-        response += apply_attack_damage_to_monster(
-            second_attack
-        )
+        total_workout_damage += second_attack["damage_dealt"]
 
         for attack_result in (first_attack, second_attack):
-            if not attack_result["hit"]:
-                response = add_counterattack_text(
-                    response,
-                    profile,
-                    combat_state,
-                )
+            if not attack_result["hit"] and not combat_state["invulnerable"]:
+                counter_damage_total += 1
+
 
     else:
         attack_result = resolve_single_attack(
@@ -461,21 +437,39 @@ def run_character_attack(character_name: str):
 
         response += attack_result["text"]
 
-        response += apply_attack_damage_to_monster(
-            attack_result
-        )
+        total_workout_damage += attack_result["damage_dealt"]
 
-        if not attack_result["hit"]:
-            response = add_counterattack_text(
-                response,
-                profile,
-                combat_state,
-            )
+        if not attack_result["hit"] and not combat_state["invulnerable"]:
+            counter_damage_total += 1
 
     if combat_state["invulnerable"]:
         response += (
             "\n🛡️ You are invulnerable today and take no damage "
             "from this attack!"
         )
+
+    result = record_workout_and_apply_damage(
+        profile["id"],
+        workout_date,
+        total_workout_damage,
+        counter_damage=counter_damage_total,
+        heal_full=(potion_effect == "heal_full")
+    )
+
+
+    if result is None:
+        return (
+            "❌ This workout couldn't be recorded. "
+            "Please contact the GM if the problem continues."
+        )
+
+    if counter_damage_total > 0:
+        response += (
+            f"\n💥 The monster strikes back! You took "
+            f"**{counter_damage_total} HP** damage and are now at "
+            f"**{result['new_hp']}/{profile['max_hp']} HP**."
+        )
+
+    response += format_monster_damage_result(result)
 
     return response

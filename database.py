@@ -105,6 +105,22 @@ def setup_database():
         )
     """)
 
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS workout_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            character_id INTEGER NOT NULL,
+            month TEXT NOT NULL,
+            workout_date TEXT NOT NULL,
+            damage_rolled INTEGER NOT NULL DEFAULT 0,
+            damage_dealt INTEGER NOT NULL DEFAULT 0,
+            recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (character_id) REFERENCES characters(id),
+            UNIQUE(character_id, workout_date)
+        )
+    """)
+
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS level_up_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -917,3 +933,199 @@ def mark_bonus_day_announced(month, day):
 
     conn.commit()
     conn.close()
+
+def has_workout_for_date(character_id, workout_date):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT 1
+        FROM workout_history
+        WHERE character_id = ?
+        AND workout_date = ?
+        LIMIT 1
+    """, (character_id, workout_date))
+
+    workout_exists = cursor.fetchone() is not None
+
+    conn.close()
+
+    return workout_exists
+
+
+def save_workout(character_id, workout_date, damage_rolled, damage_dealt):
+    month = workout_date[:7]
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            INSERT INTO workout_history (
+                character_id,
+                month,
+                workout_date,
+                damage_rolled,
+                damage_dealt
+            )
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            character_id,
+            month,
+            workout_date,
+            damage_rolled,
+            damage_dealt
+        ))
+
+        conn.commit()
+        return True
+
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        return False
+
+    finally:
+        conn.close()
+
+
+def record_workout_and_apply_damage(
+    character_id,
+    workout_date,
+    damage_rolled,
+    counter_damage=0,
+    heal_full=False
+):
+    month = workout_date[:7]
+
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    try:
+        # Lock the database for this workout transaction.
+        cursor.execute("BEGIN IMMEDIATE")
+
+        # Check for an existing workout.
+        cursor.execute("""
+            SELECT 1 FROM workout_history
+            WHERE character_id = ? AND workout_date = ?
+        """, (character_id, workout_date))
+
+        if cursor.fetchone():
+            conn.rollback()
+            return None
+
+        # Find the monthly monster.
+        cursor.execute("""
+            SELECT * FROM monthly_monsters
+            WHERE month = ?
+        """, (month,))
+
+        row = cursor.fetchone()
+        monster = dict(row) if row else None
+
+        damage_dealt = 0
+        monsters_defeated_this_attack = 0
+        hunt_complete = False
+
+        if monster:
+            hp = monster["hit_points"]
+            quantity = monster["quantity"]
+            defeated = monster["monsters_defeated"]
+            current_hp = monster["current_hp"]
+
+            if current_hp is None:
+                current_hp = hp
+
+            remaining_damage = max(0, damage_rolled)
+
+            while remaining_damage > 0 and defeated < quantity:
+                applied = min(remaining_damage, current_hp)
+                damage_dealt += applied
+                remaining_damage -= applied
+                current_hp -= applied
+
+                if current_hp == 0:
+                    defeated += 1
+                    monsters_defeated_this_attack += 1
+
+                    if defeated < quantity:
+                        current_hp = hp
+
+            hunt_complete = defeated >= quantity
+
+            cursor.execute("""
+                UPDATE monthly_monsters
+                SET current_hp = ?,
+                    monsters_defeated = ?
+                WHERE month = ?
+            """, (current_hp, defeated, month))
+
+        # Record one workout, regardless of hit or miss.
+        cursor.execute("""
+            INSERT INTO workout_history (
+                character_id,
+                month,
+                workout_date,
+                damage_rolled,
+                damage_dealt
+            )
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            character_id,
+            month,
+            workout_date,
+            damage_rolled,
+            damage_dealt
+        ))
+
+
+        # Calculate the character's HP after combat.
+        cursor.execute("""
+            SELECT current_hp, max_hp
+            FROM characters
+            WHERE id = ?
+        """, (character_id,))
+
+        character_row = cursor.fetchone()
+
+        if character_row is None:
+            raise ValueError("Character not found.")
+
+        new_hp = character_row["current_hp"]
+
+        if heal_full:
+            new_hp = character_row["max_hp"]
+
+        new_hp = max(0, new_hp - counter_damage)
+
+        cursor.execute("""
+            UPDATE characters
+            SET current_hp = ?
+            WHERE id = ?
+        """, (new_hp, character_id))
+
+
+        # Save both changes together.
+        conn.commit()
+
+        return {
+            "damage_rolled": damage_rolled,
+            "damage_dealt": damage_dealt,
+            "new_hp": new_hp,
+            "monster_name": monster["monster_name"] if monster else None,
+            "monsters_defeated_this_attack": monsters_defeated_this_attack,
+            "hunt_complete": hunt_complete,
+        }
+
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        return None
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        conn.close()
+
