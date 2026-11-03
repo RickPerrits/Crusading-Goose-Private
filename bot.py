@@ -418,7 +418,22 @@ async def mybind(ctx):
         
 @bot.command(name="ping")
 async def ping(ctx):
-    await ctx.send("🏓 Bot is online.")
+    month = get_current_month_key()
+
+    game_status = "Open" if game_is_open() else "Closed"
+
+    monster = get_monthly_monster(month)
+    monster_status = "Yes" if monster else "No"
+
+    response = (
+        "**Goose Quest Status**\n\n"
+        "Bot: **Online**\n"
+        f"Month: **{month}**\n"
+        f"Game: **{game_status}**\n"
+        f"Monster Selected: **{monster_status}**"
+    )
+
+    await ctx.send(response)
 
 @bot.command()
 async def status(ctx):
