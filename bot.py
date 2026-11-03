@@ -110,17 +110,6 @@ async def before_bonus_day_announcer():
     await bot.wait_until_ready()
 
 @bot.command()
-async def pickbonus(ctx):
-    eastern_now = datetime.now(ZoneInfo(TIMEZONE))
-    month = eastern_now.strftime("%Y-%m")
-
-    created = generate_monthly_bonus_days(
-        month,
-        list(POTIONS.keys()),
-        current_day=eastern_now.day
-    )
-    
-@bot.command()
 @commands.has_permissions(manage_guild=True)
 async def peek(ctx, month: str = None):
     month = month or get_current_month_key()
@@ -244,7 +233,7 @@ def format_dm_report(month):
                 f"{month}-{day:02d}", "%Y-%m-%d"
             ).strftime("%m/%d/%y")
 
-            response += f"-> {date} — {potion_name}\n"
+            response += f"{date} — {potion_name}\n"
     else:
         response += "No bonus days generated.\n"
 
@@ -261,72 +250,6 @@ def format_monthly_monster(monster):
         f"Party: **{monster['party_size']} characters** "
         f"(average level **{monster['party_average_level']:.2f}**)"
     )
-
-
-@bot.command()
-@commands.has_permissions(manage_guild=True)
-async def pickmonster(ctx, month: str = None):
-    month = month or get_current_month_key()
-
-    if not re.fullmatch(r"\d{4}-\d{2}", month):
-        await ctx.send("❌ Use a month like `2026-08`.")
-        return
-    existing_monster = get_monthly_monster(month)
-
-    if existing_monster:
-        await ctx.send(
-            "🔒 This month's monster is already locked.\n\n"
-            + format_monthly_monster(existing_monster)
-        )
-        return
-
-    characters = get_active_party_characters()
-
-    if not characters:
-        await ctx.send("❌ There are no living characters available for monster selection.")
-        return
-
-    average_level = get_party_average_level(characters)
-    monster = choose_monster(average_level, allow_restricted=False)
-
-    if monster is None:
-        await ctx.send("❌ No eligible monsters were found for this party.")
-        return
-
-    quantity = calculate_monster_quantity(monster, characters)
-    saved = save_monthly_monster(
-        month,
-        monster,
-        average_level,
-        len(characters),
-        quantity,
-    )
-
-    if not saved:
-        await ctx.send("❌ I couldn't lock the monthly monster.")
-        return
-
-    monthly_monster = get_monthly_monster(month)
-    await ctx.send(
-        "🪿 **The Crusading Goose has chosen the hunt!**\n\n"
-        + format_monthly_monster(monthly_monster)
-    )
-
-
-@bot.command()
-async def currentmonster(ctx, month: str = None):
-    month = month or get_current_month_key()
-
-    if not re.fullmatch(r"\d{4}-\d{2}", month):
-        await ctx.send("❌ Use a month like `2026-08`.")
-        return
-    monster = get_monthly_monster(month)
-
-    if monster is None:
-        await ctx.send("No monster has been selected for this month yet.")
-        return
-
-    await ctx.send(format_monthly_monster(monster))
 
 @bot.command()
 async def roll(ctx, *, expression: str = "1d20"):
@@ -519,25 +442,6 @@ async def mybind(ctx):
     else:
         await ctx.send("You are not currently bound to any character.")
         
-@bot.command(name="ping")
-async def ping(ctx):
-    month = get_current_month_key()
-
-    game_status = "Open" if game_is_open() else "Closed"
-
-    monster = get_monthly_monster(month)
-    monster_status = "Yes" if monster else "No"
-
-    response = (
-        "**Goose Quest Status**\n\n"
-        "Bot: **Online**\n"
-        f"Month: **{month}**\n"
-        f"Game: **{game_status}**\n"
-        f"Monster Selected: **{monster_status}**"
-    )
-
-    await ctx.send(response)
-
 @bot.command()
 async def status(ctx):
     character = get_character_by_discord_user_id(ctx.author.id)
