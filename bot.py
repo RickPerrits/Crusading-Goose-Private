@@ -122,30 +122,133 @@ async def pickbonus(ctx):
     
 @bot.command()
 @commands.has_permissions(manage_guild=True)
-async def peek(ctx):
-    month = get_current_month_key()
+async def peek(ctx, month: str = None):
+    month = month or get_current_month_key()
 
-    bonus_days = get_all_bonus_days_for_month(month)
-
-    if not bonus_days:
-        await ctx.send(
-            "No bonus days have been generated for this month yet."
-        )
+    if not re.fullmatch(r"(?!0000)\d{4}-(0[1-9]|1[0-2])", month):
+        await ctx.send("Use a month like 2026-11.")
         return
 
-    response = "🪿 **The Crusading Goose whispers his secrets...**\n\n"
+    response = format_dm_report(month)
 
-    for day, potion_key in bonus_days:
-        potion = POTIONS[potion_key]
-        response += (
-            f"{month}-{day:02d} - "
-            f"{potion['emoji']} {potion['name']}\n"
+    try:
+        await ctx.author.send(response)
+        await ctx.send("Campaign status sent to your DMs.", delete_after=10)
+    except discord.Forbidden:
+        await ctx.send("I couldn't send you a DM. Check your privacy settings.")
+
+@bot.command()
+@commands.has_permissions(manage_guild=True)
+async def pick(ctx, month: str = None):
+    month = month or get_current_month_key()
+
+    if not re.fullmatch(r"(?!0000)\d{4}-(0[1-9]|1[0-2])", month):
+        await ctx.send("Use a month like 2026-11.")
+        return
+
+    current_month = get_current_month_key()
+
+    if month < current_month:
+        await ctx.send("Past campaigns cannot be generated. Use !peek instead.")
+        return
+
+    # Step 1: Check whether a monster already exists.
+    existing_monster = get_monthly_monster(month)
+
+    if not existing_monster:
+        characters = get_active_party_characters()
+
+        if not characters:
+            await ctx.send("No living characters available for monster selection.")
+            return
+
+        average_level = get_party_average_level(characters)
+        monster = choose_monster(average_level, allow_restricted=False)
+
+        if monster is None:
+            await ctx.send("No eligible monsters were found.")
+            return
+
+        quantity = calculate_monster_quantity(monster, characters)
+
+        save_monthly_monster(
+            month,
+            monster,
+            average_level,
+            len(characters),
+            quantity,
         )
 
-    response += "\nPlease pretend to be surprised when they happen."
+    # Step 2: Generate bonus days if they don't exist.
+    current_day = datetime.now(ZoneInfo(TIMEZONE)).day
 
-    await ctx.send(response)
+    if month > current_month:
+        current_day = 1
 
+    generate_monthly_bonus_days(
+        month,
+        list(POTIONS.keys()),
+        current_day=current_day
+    )
+
+    # Step 3: Display the saved campaign information.
+    response = format_dm_report(month)
+
+    try:
+        await ctx.author.send(response)
+        await ctx.send("Campaign selections sent to your DMs.", delete_after=10)
+    except discord.Forbidden:
+        await ctx.send("I couldn't send you a DM. Check your privacy settings.")
+
+def format_dm_report(month):
+    monster = get_monthly_monster(month)
+    bonus_days = get_all_bonus_days_for_month(month)
+
+    month_name = datetime.strptime(month, "%Y-%m").strftime("%B %Y")
+
+    current_month = get_current_month_key()
+    today = datetime.now(ZoneInfo(TIMEZONE)).day
+
+    if month > current_month:
+        game_status = "Upcoming"
+    elif month < current_month:
+        game_status = "Completed"
+    elif today <= 28:
+        game_status = "Open"
+    else:
+        game_status = "Closed"
+
+    response = (
+        "**Goose Quest — DM Status**\n"
+        f"{month_name}\n\n"
+        "Bot: Online\n"
+        f"Game: {game_status}\n"
+    )
+
+    if monster:
+        response += (
+            f"Monster: {monster['monster_name']}\n"
+            f"Quantity: {monster['quantity']}\n"
+        )
+    else:
+        response += "Monster: Not selected\n"
+
+    response += "\n**Bonus Schedule:**\n"
+
+    if bonus_days:
+        for day, potion_key in bonus_days:
+            potion = POTIONS.get(potion_key)
+            potion_name = potion["name"] if potion else potion_key
+
+            date = datetime.strptime(
+                f"{month}-{day:02d}", "%Y-%m-%d"
+            ).strftime("%m/%d/%y")
+
+            response += f"-> {date} — {potion_name}\n"
+    else:
+        response += "No bonus days generated.\n"
+
+    return response
 
 def format_monthly_monster(monster):
     return (
