@@ -296,7 +296,7 @@ def format_monthly_monster(monster):
         f"Quantity: **{monster['quantity']}**\n"
         f"HP each: **{monster['hit_points']}**\n"
         f"AC: **{monster['armor_class']}**\n"
-        f"Counter Damage: **{monster['counter_damage']}**\n"
+        f"Counter Damage: **{ {1: '1d8', 2: '1d6 + 1', 3: '1d6', 4: '1d4 + 1', 5: '1d4', 6: '1'}.get(monster['threat_level'], '1')}**\n"
         f"Party: **{monster['party_size']} characters** "
         f"(average level **{monster['party_average_level']:.2f}**)"
     )

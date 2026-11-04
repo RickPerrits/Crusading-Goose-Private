@@ -9,6 +9,7 @@ from database import (
     get_character,
     record_workout_and_apply_damage,
     has_workout_for_date,
+    get_monthly_monster,
 )
 from items import POTIONS
 
@@ -87,6 +88,20 @@ def roll_single_d20():
     value = random.randint(1, 20)
     return value, f"1d20[{value}]"
 
+def roll_monster_counter_damage(threat_level):
+    if threat_level == 6:
+        return 1
+    if threat_level == 5:
+        return random.randint(1, 4)
+    if threat_level == 4:
+        return random.randint(1, 4) + 1
+    if threat_level == 3:
+        return random.randint(1, 6)
+    if threat_level == 2:
+        return random.randint(1, 6) + 1
+    if threat_level == 1:
+        return random.randint(1, 8)
+    return 1
 
 def get_attack_roll(potion_effect):
     if potion_effect == "attack_becomes_11":
@@ -317,6 +332,9 @@ def run_character_attack(character_name: str):
 
     eastern_now = datetime.now(ZoneInfo(TIMEZONE))
     workout_date = eastern_now.strftime("%Y-%m-%d")
+    month = eastern_now.strftime("%Y-%m")
+    monster = get_monthly_monster(month)
+    threat_level = monster["threat_level"] if monster else 6
 
     if has_workout_for_date(profile["id"], workout_date):
         return (
@@ -434,7 +452,7 @@ def run_character_attack(character_name: str):
 
         for attack_result in (first_attack, second_attack):
             if not attack_result["hit"] and not combat_state["invulnerable"]:
-                counter_damage_total += 1
+                counter_damage_total += roll_monster_counter_damage(threat_level)
 
 
     else:
@@ -449,7 +467,7 @@ def run_character_attack(character_name: str):
         total_workout_damage += attack_result["damage_dealt"]
 
         if not attack_result["hit"] and not combat_state["invulnerable"]:
-            counter_damage_total += 1
+            counter_damage_total += roll_monster_counter_damage(threat_level)
 
     if combat_state["invulnerable"]:
         response += (
