@@ -479,10 +479,10 @@ async def status(ctx):
         f"❤️ HP: **{character['current_hp']}/{character['max_hp']}**\n"
         f"🎲 Damage Die: **{character['damage_die']}**\n"
         f"✨ Helper Dice: **{helper_dice}**\n"
-        f"🪙 Gold: **{character['gold']}**\n\n"
+        f"🪙 Gold: **{character['gold']}**\n"
         f"🏋️ Workouts This Month: **{workout_count}**\n"
-        f"📅 Days Since Last Workout: **{days_since_workout}**\n"
-        
+        f"📅 Days Since Last Workout: **{days_since_workout}**\n\n"
+
         f"🌟 Ability Charges: **Coming Soon**\n"
         f"🎒 Equipment / Potions: **Coming Soon**"
     )
