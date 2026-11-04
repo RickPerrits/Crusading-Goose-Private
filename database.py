@@ -1,6 +1,9 @@
 import sqlite3
 from pathlib import Path
 import random
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
+from config import TIMEZONE
 
 from classes import (
     CLASS_RULES,
@@ -131,6 +134,35 @@ def setup_database():
             reward_key TEXT UNIQUE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (character_id) REFERENCES characters(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS inactivity_penalties (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            character_id INTEGER NOT NULL,
+            penalty_date TEXT NOT NULL,
+            hp_lost INTEGER NOT NULL DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (character_id) REFERENCES characters(id),
+            UNIQUE(character_id, penalty_date)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS revival_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            character_id INTEGER NOT NULL,
+            revival_date TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (character_id) REFERENCES characters(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS monthly_hp_resets (
+            month TEXT PRIMARY KEY,
+            reset_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
@@ -556,26 +588,57 @@ def damage_character_by_discord_user_id(discord_user_id, damage_amount):
     }
 
 def heal_character_full_by_discord_user_id(discord_user_id):
-    character = get_character_by_discord_user_id(discord_user_id)
-
-    if character is None:
-        return None
-
     conn = get_connection()
+    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
 
-    cursor.execute("""
-        UPDATE characters
-        SET current_hp = max_hp
-        WHERE discord_user_id = ?
-    """, (discord_user_id,))
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
 
-    conn.commit()
-    conn.close()
+        # Find the character's current HP.
+        cursor.execute("""
+            SELECT id, current_hp, max_hp
+            FROM characters
+            WHERE discord_user_id = ?
+        """, (discord_user_id,))
 
-    character["current_hp"] = character["max_hp"]
+        character = cursor.fetchone()
 
-    return character
+        if character is None:
+            conn.rollback()
+            return None
+
+        was_unconscious = character["current_hp"] <= 0
+
+        # Restore the character to full HP.
+        cursor.execute("""
+            UPDATE characters
+            SET current_hp = max_hp
+            WHERE id = ?
+        """, (character["id"],))
+
+        # Record a revival only when HP changes from 0 to positive.
+        if was_unconscious and character["max_hp"] > 0:
+            revival_date = datetime.now(
+                ZoneInfo(TIMEZONE)
+            ).strftime("%Y-%m-%d")
+
+            record_revival(
+                cursor,
+                character["id"],
+                revival_date
+            )
+
+        conn.commit()
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        conn.close()
+
+    return get_character_by_discord_user_id(discord_user_id)
 
 def save_bonus_day(month, day, potion_key, target_discord_id=None, target_name=None):
     conn = get_connection()
@@ -1299,6 +1362,17 @@ def record_workout_and_apply_damage(
 
         new_hp = max(0, new_hp - counter_damage)
 
+        # Check whether the character was revived.
+        was_unconscious = character_row["current_hp"] <= 0
+        is_now_conscious = new_hp > 0
+
+        if was_unconscious and is_now_conscious:
+            record_revival(
+                cursor,
+                character_id,
+                workout_date
+            )
+
         cursor.execute("""
             UPDATE characters
             SET current_hp = ?
@@ -1358,3 +1432,223 @@ def record_workout_and_apply_damage(
     finally:
         conn.close()
 
+def record_revival(cursor, character_id, revival_date):
+    cursor.execute("""
+        INSERT INTO revival_history (
+            character_id,
+            revival_date
+        )
+        VALUES (?, ?)
+    """, (character_id, revival_date))
+
+def get_last_revival_date(character_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT MAX(revival_date)
+        FROM revival_history
+        WHERE character_id = ?
+    """, (character_id,))
+
+    result = cursor.fetchone()
+    conn.close()
+
+    return result[0] if result else None
+
+def count_inactive_game_days(last_reset_date, check_date):
+    # Convert saved date strings into Python dates.
+    start_date = date.fromisoformat(last_reset_date)
+    end_date = date.fromisoformat(check_date)
+
+    inactive_days = 0
+    current_date = start_date + timedelta(days=1)
+
+    while current_date <= end_date:
+        # Only days 1 through 28 count.
+        if 1 <= current_date.day <= 28:
+            inactive_days += 1
+
+        current_date += timedelta(days=1)
+
+    return inactive_days
+
+def get_inactivity_penalty_dates(character_id, check_date):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Retrieve all workouts and revivals.
+    cursor.execute("""
+        SELECT workout_date
+        FROM workout_history
+        WHERE character_id = ?
+
+        UNION
+
+        SELECT revival_date
+        FROM revival_history
+        WHERE character_id = ?
+    """, (character_id, character_id))
+
+    reset_dates = {
+        date.fromisoformat(row[0])
+        for row in cursor.fetchall()
+    }
+
+    conn.close()
+
+    # No workout or revival means the clock
+    # has not started yet.
+    if not reset_dates:
+        return []
+
+    end_date = date.fromisoformat(check_date)
+    current_date = min(reset_dates)
+    inactive_days = 0
+    penalty_dates = []
+
+    while current_date <= end_date:
+
+        # Reset the inactivity clock at the start of each month.
+        if current_date.day == 1:
+            inactive_days = 0
+
+        if current_date in reset_dates:
+            # A workout or revival resets the clock.
+            inactive_days = 0
+
+        elif 1 <= current_date.day <= 28:
+            inactive_days += 1
+
+            if inactive_days >= 6:
+                penalty_dates.append(
+                    current_date.isoformat()
+                )
+
+        current_date += timedelta(days=1)
+
+    # Only return penalties after the most recent reset.
+    last_reset = max(
+        (
+            reset_day for reset_day in reset_dates
+            if reset_day <= end_date
+        ),
+        default=None
+    )
+
+    if last_reset is None:
+        return []
+
+    # Never carry penalties into a new month.
+    month_start = end_date.replace(day=1)
+    last_reset = max(last_reset, month_start)
+
+
+    return [
+        penalty_day for penalty_day in penalty_dates
+        if penalty_day > last_reset.isoformat()
+    ]
+
+def apply_inactivity_penalties(character_id, check_date):
+    # Find dates that qualify for inactivity penalties.
+    penalty_dates = get_inactivity_penalty_dates(
+        character_id,
+        check_date
+    )
+
+    # Only process penalties from the month being checked.
+    month = check_date[:7]
+    penalty_dates = [
+        day for day in penalty_dates
+        if day.startswith(month)
+    ]
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    hp_lost = 0
+
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+
+        for penalty_date in penalty_dates:
+            # Check the character's current HP.
+            cursor.execute("""
+                SELECT current_hp
+                FROM characters
+                WHERE id = ?
+            """, (character_id,))
+
+            character = cursor.fetchone()
+
+            if character is None or character[0] <= 0:
+                break
+
+            # Record the penalty only if it hasn't
+            # already been processed.
+            cursor.execute("""
+                INSERT OR IGNORE INTO inactivity_penalties (
+                    character_id,
+                    penalty_date,
+                    hp_lost
+                )
+                VALUES (?, ?, 1)
+            """, (character_id, penalty_date))
+
+            if cursor.rowcount == 0:
+                continue
+
+            # Deduct one HP without going below zero.
+            cursor.execute("""
+                UPDATE characters
+                SET current_hp = MAX(0, current_hp - 1)
+                WHERE id = ?
+            """, (character_id,))
+
+            hp_lost += 1
+
+        conn.commit()
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        conn.close()
+
+    return hp_lost
+
+def restore_monthly_hp(month):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+
+        # Claim this month's reset.
+        cursor.execute("""
+            INSERT OR IGNORE INTO monthly_hp_resets (month)
+            VALUES (?)
+        """, (month,))
+
+        # If the record already exists, do nothing.
+        if cursor.rowcount == 0:
+            conn.rollback()
+            return False
+
+        # Restore HP for living characters.
+        cursor.execute("""
+            UPDATE characters
+            SET current_hp = max_hp
+            WHERE dead = 0
+        """)
+
+        conn.commit()
+        return True
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        conn.close()

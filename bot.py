@@ -38,9 +38,11 @@ from database import (
     get_monthly_monster,
     save_monthly_monster,
     get_workout_stats,
+    apply_inactivity_penalties,
+    restore_monthly_hp,
 )
 
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 def game_is_open():
@@ -50,14 +52,50 @@ def game_is_open():
 intents = discord.Intents.default()
 intents.message_content = True
 
-
-
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 def get_current_month_key():
     eastern_now = datetime.now(ZoneInfo(TIMEZONE))
     return eastern_now.strftime("%Y-%m")
 
+def check_monthly_hp_reset():
+    month = get_current_month_key()
+
+    restored = restore_monthly_hp(month)
+
+    if restored:
+        print(f"Monthly HP restored for {month}.")
+
+    return restored
+
+def process_inactivity_checks():
+    today = datetime.now(ZoneInfo(TIMEZONE)).date()
+    yesterday = today - timedelta(days=1)
+
+    # Never process penalties from a previous month.
+    if yesterday.month != today.month:
+        return 0
+
+    # The 29th through 31st are rest days.
+    # Catch up through the 28th if necessary.
+    check_day = min(yesterday.day, 28)
+    check_date = yesterday.replace(day=check_day)
+
+    total_hp_lost = 0
+
+    for character in get_active_party_characters():
+        # Only registered, bound players participate.
+        if character["discord_user_id"] is None:
+            continue
+
+        hp_lost = apply_inactivity_penalties(
+            character["id"],
+            check_date.isoformat()
+        )
+
+        total_hp_lost += hp_lost
+
+    return total_hp_lost
 
 @tasks.loop(hours=1)
 async def monthly_bonus_picker():
@@ -75,7 +113,6 @@ async def monthly_bonus_picker():
             f"Monthly bonus days generated for {month} "
             f"starting from day {eastern_now.day}."
         )
-
 
 @tasks.loop(time=time(hour=12, minute=0, tzinfo=ZoneInfo(TIMEZONE)))
 async def bonus_day_announcer():
@@ -108,6 +145,18 @@ async def bonus_day_announcer():
 
 @bonus_day_announcer.before_loop
 async def before_bonus_day_announcer():
+    await bot.wait_until_ready()
+
+@tasks.loop(time=time(hour=0, minute=5, tzinfo=ZoneInfo(TIMEZONE)))
+async def daily_inactivity_checker():
+    check_monthly_hp_reset()
+
+    hp_lost = process_inactivity_checks()
+
+    print(f"Daily inactivity check: {hp_lost} HP lost.")
+
+@daily_inactivity_checker.before_loop
+async def before_daily_inactivity_checker():
     await bot.wait_until_ready()
 
 @bot.command()
@@ -333,6 +382,8 @@ async def attack(ctx, *, personal_message: str = None):
         await ctx.send("The hunt is over for this month. Rest up — we begin again on the 1st.")
         return
 
+    check_monthly_hp_reset()
+    
     character = get_character_by_discord_user_id(ctx.author.id)
 
     if not character:
@@ -499,18 +550,25 @@ async def status(ctx):
             delete_after=10
         )
 
-
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
 
     setup_database()
 
+    check_monthly_hp_reset()
+
+    hp_lost = process_inactivity_checks()
+    print(f"Startup inactivity check: {hp_lost} HP lost.")
+
     if not monthly_bonus_picker.is_running():
         monthly_bonus_picker.start()
 
     if not bonus_day_announcer.is_running():
         bonus_day_announcer.start()
+
+    if not daily_inactivity_checker.is_running():
+        daily_inactivity_checker.start()
 
 @bot.event
 async def on_message(message):
