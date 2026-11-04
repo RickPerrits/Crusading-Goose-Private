@@ -119,7 +119,20 @@ def setup_database():
             UNIQUE(character_id, workout_date)
         )
     """)
-
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS gold_transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            character_id INTEGER NOT NULL,
+            month TEXT,
+            amount INTEGER NOT NULL,
+            transaction_type TEXT NOT NULL,
+            description TEXT,
+            reward_key TEXT UNIQUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (character_id) REFERENCES characters(id)
+        )
+    """)
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS level_up_history (
@@ -955,6 +968,166 @@ def get_workout_stats(character_id, month):
         "last_workout_date": last_workout_date
     }
 
+
+def calculate_potential_gold(character_id, month):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT COUNT(*)
+        FROM workout_history
+        WHERE character_id = ?
+        AND month = ?
+    """, (character_id, month))
+
+    workout_count = cursor.fetchone()[0]
+
+    cursor.execute("""
+        SELECT level
+        FROM characters
+        WHERE id = ?
+    """, (character_id,))
+
+    character = cursor.fetchone()
+
+    conn.close()
+
+    if character is None:
+        return 0
+
+    level = character[0]
+
+    return max(0, workout_count - 12) * level
+
+def get_awarded_gold(character_id, month):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT COALESCE(SUM(amount), 0)
+        FROM gold_transactions
+        WHERE character_id = ?
+        AND month = ?
+        AND transaction_type = 'workout_reward'
+    """, (character_id, month))
+
+    awarded_gold = cursor.fetchone()[0]
+
+    conn.close()
+
+    return awarded_gold
+
+def award_owed_gold(cursor, character_id, month):
+    # Find the character and check eligibility.
+    cursor.execute("""
+        SELECT level, current_hp, dead
+        FROM characters
+        WHERE id = ?
+    """, (character_id,))
+
+    character = cursor.fetchone()
+
+    if character is None:
+        return 0
+
+    level, current_hp, dead = character
+
+    if dead or current_hp <= 0:
+        return 0
+
+    # Count monthly workouts.
+    cursor.execute("""
+        SELECT COUNT(*)
+        FROM workout_history
+        WHERE character_id = ?
+        AND month = ?
+    """, (character_id, month))
+
+    workout_count = cursor.fetchone()[0]
+
+    # Calculate total qualifying gold.
+    total_gold = max(0, workout_count - 12) * level
+
+    # Find how much has already been awarded.
+    cursor.execute("""
+        SELECT COALESCE(SUM(amount), 0)
+        FROM gold_transactions
+        WHERE character_id = ?
+        AND month = ?
+        AND transaction_type = 'workout_reward'
+    """, (character_id, month))
+
+    awarded_gold = cursor.fetchone()[0]
+
+    gold_owed = max(0, total_gold - awarded_gold)
+
+    if gold_owed == 0:
+        return 0
+
+    # Record the reward.
+    reward_key = f"workout:{month}:{character_id}:{workout_count}"
+
+    cursor.execute("""
+        INSERT INTO gold_transactions (
+            character_id,
+            month,
+            amount,
+            transaction_type,
+            description,
+            reward_key
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (
+        character_id,
+        month,
+        gold_owed,
+        "workout_reward",
+        "Monthly workout gold",
+        reward_key
+    ))
+
+    # Add earned gold to the spendable balance.
+    cursor.execute("""
+        UPDATE characters
+        SET gold = gold + ?
+        WHERE id = ?
+    """, (gold_owed, character_id))
+
+    return gold_owed
+
+def award_party_victory_gold(cursor, month):
+    # Find all characters participating in the campaign.
+    cursor.execute("""
+        SELECT id
+        FROM characters
+        WHERE dead = 0
+        AND discord_user_id IS NOT NULL
+    """)
+
+    characters = cursor.fetchall()
+
+    total_gold_awarded = 0
+    players_rewarded = 0
+
+    # Award outstanding gold to each eligible character.
+    for character in characters:
+        character_id = character[0]
+
+        gold_awarded = award_owed_gold(
+            cursor,
+            character_id,
+            month
+        )
+
+        if gold_awarded > 0:
+            total_gold_awarded += gold_awarded
+            players_rewarded += 1
+
+    return {
+        "total_gold_awarded": total_gold_awarded,
+        "players_rewarded": players_rewarded
+    }
+
 def has_workout_for_date(character_id, workout_date):
     conn = get_connection()
     cursor = conn.cursor()
@@ -1042,8 +1215,15 @@ def record_workout_and_apply_damage(
             WHERE month = ?
         """, (month,))
 
+        
         row = cursor.fetchone()
         monster = dict(row) if row else None
+
+        # Was the hunt already complete before this workout?
+        was_hunt_complete = (
+            monster is not None
+            and monster["monsters_defeated"] >= monster["quantity"]
+        )
 
         damage_dealt = 0
         monsters_defeated_this_attack = 0
@@ -1100,7 +1280,6 @@ def record_workout_and_apply_damage(
             damage_dealt
         ))
 
-
         # Calculate the character's HP after combat.
         cursor.execute("""
             SELECT current_hp, max_hp
@@ -1126,6 +1305,32 @@ def record_workout_and_apply_damage(
             WHERE id = ?
         """, (new_hp, character_id))
 
+        # Handle gold rewards after combat and HP updates.
+        gold_awarded = 0
+        party_gold_awarded = 0
+        players_rewarded = 0
+
+        if monster and hunt_complete:
+
+            if not was_hunt_complete:
+                # The final monster was just defeated.
+                # Award accumulated gold to the whole party.
+                party_rewards = award_party_victory_gold(
+                    cursor,
+                    month
+                )
+
+                party_gold_awarded = party_rewards["total_gold_awarded"]
+                players_rewarded = party_rewards["players_rewarded"]
+
+            else:
+                # The hunt was already complete.
+                # Award this character's additional gold.
+                gold_awarded = award_owed_gold(
+                    cursor,
+                    character_id,
+                    month
+                )
 
         # Save both changes together.
         conn.commit()
@@ -1137,6 +1342,9 @@ def record_workout_and_apply_damage(
             "monster_name": monster["monster_name"] if monster else None,
             "monsters_defeated_this_attack": monsters_defeated_this_attack,
             "hunt_complete": hunt_complete,
+            "gold_awarded": gold_awarded,
+            "party_gold_awarded": party_gold_awarded,
+            "players_rewarded": players_rewarded,
         }
 
     except sqlite3.IntegrityError:

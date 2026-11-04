@@ -134,34 +134,43 @@ def get_todays_bonus_potion(discord_user_id=None):
 
     return POTIONS[potion_key]
 
-
 def format_monster_damage_result(result):
     if result is None:
         return ""
 
     defeated_count = result["monsters_defeated_this_attack"]
+    gold_awarded = result.get("gold_awarded", 0)
 
+    # The final monster has just been defeated.
     if result["hunt_complete"] and defeated_count > 0:
         return (
-            f"\n\n🏆 **FINAL BLOW!** "
-            f"You defeated the last **{result['monster_name']}**!\n"
-            f"🪿 **The hunt is complete!**"
+            f"\n\n🏆 **THE HUNT IS COMPLETE!**\n"
+            f"The final {result['monster_name']} has fallen!\n\n"
+            f"🪙 **Victory rewards unlocked!**\n"
+            f"All eligible adventurers have received their "
+            f"accumulated gold. Future workouts this month "
+            f"will earn additional gold!"
         )
 
+    # One monster defeated.
     if defeated_count == 1:
         return (
             f"\n\n💀 You knocked out "
             f"**1 {result['monster_name']}!**"
         )
 
+    # Multiple monsters defeated.
     if defeated_count > 1:
         return (
             f"\n\n💀 You knocked out "
             f"**{defeated_count} {result['monster_name']}!**"
         )
 
-    return ""
+    # Gold earned from a workout after victory.
+    if gold_awarded > 0:
+        return f"\n\n🪙 **+{gold_awarded} Gold earned!**"
 
+    return ""
 
 def resolve_single_attack(
     character_name: str,
