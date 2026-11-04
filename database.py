@@ -934,6 +934,27 @@ def mark_bonus_day_announced(month, day):
     conn.commit()
     conn.close()
 
+def get_workout_stats(character_id, month):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            COUNT(CASE WHEN month = ? THEN 1 END),
+            MAX(workout_date)
+        FROM workout_history
+        WHERE character_id = ?
+    """, (month, character_id))
+
+    workout_count, last_workout_date = cursor.fetchone()
+
+    conn.close()
+
+    return {
+        "workout_count": workout_count,
+        "last_workout_date": last_workout_date
+    }
+
 def has_workout_for_date(character_id, workout_date):
     conn = get_connection()
     cursor = conn.cursor()

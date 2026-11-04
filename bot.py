@@ -37,6 +37,7 @@ from database import (
     get_active_party_characters,
     get_monthly_monster,
     save_monthly_monster,
+    get_workout_stats,
 )
 
 from datetime import datetime, time
@@ -455,6 +456,21 @@ async def status(ctx):
 
     helper_dice = character["helper_dice"] or "None"
 
+    month = get_current_month_key()
+
+    workout_stats = get_workout_stats(character["id"], month)
+
+    workout_count = workout_stats["workout_count"]
+    last_workout_date = workout_stats["last_workout_date"]
+
+    if last_workout_date:
+        last_date = datetime.strptime(last_workout_date, "%Y-%m-%d").date()
+        today = datetime.now(ZoneInfo(TIMEZONE)).date()
+
+        days_since_workout = (today - last_date).days
+    else:
+        days_since_workout = "No workouts recorded"
+
     response = (
         f"🪿 **{character['character_name'].title()}'s Status**\n\n"
 
@@ -464,9 +480,9 @@ async def status(ctx):
         f"🎲 Damage Die: **{character['damage_die']}**\n"
         f"✨ Helper Dice: **{helper_dice}**\n"
         f"🪙 Gold: **{character['gold']}**\n\n"
-
-        f"🏋️ Workouts This Month: **Coming Soon**\n"
-        f"📅 Days Since Last Workout: **Coming Soon**\n"
+        f"🏋️ Workouts This Month: **{workout_count}**\n"
+        f"📅 Days Since Last Workout: **{days_since_workout}**\n"
+        
         f"🌟 Ability Charges: **Coming Soon**\n"
         f"🎒 Equipment / Potions: **Coming Soon**"
     )
